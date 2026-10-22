@@ -1,0 +1,15 @@
+{
+  "name": "seam",
+  "version": "0.1.0",
+  "description": "Make AI video transitions between two shots with open models on your own GPU (ComfyUI + Comfy SDK). Includes the Seam skill and MCP server.",
+  "author": { "name": "jdnichollsc" },
+  "license": "MIT",
+  "keywords": ["comfyui", "video", "transitions", "ltx", "open-weights"],
+  "mcpServers": {
+    "seam": {
+      "command": "uv",
+      "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "seam", "mcp"],
+      "env": { "SEAM_URL": "http://127.0.0.1:7860" }
+    }
+  }
+}

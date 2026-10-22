@@ -1,0 +1,201 @@
+# Seam transition presets — P0 candidates (original text, not derived from any third-party preset).
+# Each preset is model-neutral; seam renders it per model (H3 FL2VA structure, LTX phrasing).
+# {a} / {b} are short descriptions of the first and last images.
+version: 1
+# status: launch = qualified + exposed · candidate = pending qualification (dev only: SEAM_SHOW_CANDIDATES=1)
+#         deferred = post-launch · trial = alternative-model test in progress (research)
+presets:
+  - id: morph
+    name: Morph
+    status: deferred
+    category: seamless
+    path: "{a} begins to flow like soft liquid; shapes, colors and lighting blend continuously, every contour reshaping smoothly until it resolves into {b}."
+    camera: static camera, gentle slow push-in
+    sound: a soft airy shimmer that swells and settles
+    model: l25          # public default (enhancer on)
+  - id: melt
+    name: Melt
+    status: candidate
+    category: elemental
+    path: "{a} softens and melts downward in thick glossy drips, the whole frame liquefying into a swirling pool of color that rises and solidifies into {b}."
+    camera: static camera
+    sound: viscous dripping and a low warm hum
+  - id: smoke
+    name: Smoke
+    status: launch
+    category: elemental
+    path: "Thick billowing smoke rolls in from the edges and swallows {a}; the smoke swirls and thins, revealing {b} as it clears."
+    camera: slow push-in through the smoke
+    sound: a deep whoosh of rolling smoke
+  - id: ink
+    name: Ink Shadow
+    status: candidate
+    category: elemental
+    path: "{a} dissolves into dense black ink that blooms and spirals through the air like ink in water, then gathers and reforms into {b}."
+    camera: static camera
+    sound: a muffled underwater swirl
+  - id: fire
+    name: Fire
+    status: deferred
+    category: elemental
+    path: "Bright flames ignite at the edges and race across {a}, the whole frame engulfed in roaring orange fire; the flames burn away to reveal {b}."
+    camera: static camera with a slight handheld sway
+    sound: crackling roaring fire that fades to embers
+    model: l23          # user pick after the bake-off (LTX-2.3 + transition LoRA)
+  - id: water
+    name: Water Surge
+    status: candidate
+    category: elemental
+    path: "A crashing wave of clear water surges across {a}, the frame churning with foam and bubbles; the water drains away, leaving {b}."
+    camera: static camera
+    sound: a crashing wave and draining water
+  - id: sand
+    name: Sand Storm
+    status: candidate
+    category: elemental
+    path: "{a} crumbles into fine golden sand that is swept up by the wind into a swirling storm, the grains settling and reforming into {b}."
+    camera: slow orbit
+    sound: wind and hissing sand
+  - id: light_burst
+    name: Light Burst
+    status: candidate
+    category: energy
+    path: "A blinding flash of white light bursts from the center of {a}, rays and lens flares filling the frame, then fading to reveal {b}."
+    camera: static camera
+    sound: a bright rising whoosh and a shimmering chime
+  - id: zoom_through
+    name: Zoom Through
+    status: candidate
+    category: camera
+    path: "The camera rushes forward into {a}, diving through the frame with streaking motion blur, and emerges inside {b}."
+    camera: fast dolly-in that slows down at the end
+    sound: a rushing wind whoosh
+  - id: whip_pan
+    name: Whip Pan
+    status: launch
+    category: camera
+    path: "The camera whips sideways away from {a} in a fast blurred pan and lands precisely on {b}, which comes into sharp focus."
+    camera: fast horizontal whip pan with motion blur, settling at the end
+    sound: a sharp swish
+    model: l25          # user pick after the bake-off
+  - id: hand_wipe
+    name: Hand Wipe
+    status: candidate
+    category: camera
+    path: "A hand sweeps quickly across the lens, covering {a}; as the hand moves away, {b} is revealed behind it."
+    camera: static camera
+    sound: a quick fabric swipe
+  - id: glitch
+    name: Glitch
+    status: candidate
+    category: digital
+    path: "{a} breaks into digital glitches, RGB channel splits and blocky pixel distortion that intensify, then snap and reassemble into {b}."
+    camera: static camera with digital jitter
+    sound: electronic glitch bursts and static
+  # --- added 2026-10-17: concepts from the public transition catalog of a popular app, rewritten from
+  # scratch (our own wording; no third-party text, previews or names).
+  - id: raven
+    name: Raven Flock
+    status: trial
+    category: vfx
+    path: "A flock of black ravens bursts out of the shadows and swirls around {a}, wings filling the frame in a dark storm with glints of glowing eyes; as the birds scatter, {b} is revealed."
+    camera: static camera, slight push-in
+    sound: a thunder of beating wings and distant caws
+  - id: air
+    name: Wind Vortex
+    status: candidate
+    category: elemental
+    path: "A spiralling vortex of wind and swirling leaves wraps around {a}, the air visibly twisting and blurring everything; the vortex spins faster, then unwinds to leave {b}."
+    camera: slow orbit around the subject
+    sound: a rising howling wind that drops to a calm breeze
+  - id: water_bend
+    name: Water Bend
+    status: launch
+    category: elemental
+    path: "{a} liquefies into clear rushing water that rises as a tall wave, curls through the frame and reshapes itself into {b} as the water settles."
+    camera: static camera
+    sound: rushing water and a soft splash
+  - id: lava
+    name: Lava
+    status: candidate
+    category: elemental
+    path: "Glowing cracks spread across {a} as molten lava breaks through, the frame turning into flowing orange magma and sparks; the lava cools and darkens, revealing {b}."
+    camera: static camera with a slight handheld sway
+    sound: deep rumbling, hissing lava and crackling rock
+  - id: fpv
+    name: FPV Fly-Through
+    status: trial
+    category: camera
+    path: "A first-person drone camera dives toward {a} at high speed, skims past it, banks through the scene and swoops into {b}, slowing down at the end."
+    camera: fast FPV drone flight with banking turns
+    sound: a rushing wind whoosh and a drone buzz
+  - id: pillars
+    name: Pillar Wipe
+    status: trial
+    category: wipe
+    path: "Tall stone pillars slide past the camera one after another, briefly hiding {a}; as the last pillar passes, {b} is revealed behind it."
+    camera: steady lateral tracking shot
+    sound: heavy stone sliding and rumbling
+  - id: spin_wipe
+    name: Spin Wipe
+    status: deferred
+    category: wipe
+    path: "A giant spinning ring rolls across the frame, wiping {a} away as it passes and leaving {b} in its wake."
+    camera: static camera
+    sound: a playful spinning whoosh
+  - id: cameraman
+    name: Camera Operator
+    status: candidate
+    category: wipe
+    path: "A camera operator holding a large cinema camera steps into the foreground, lens first, briefly filling the frame in front of {a}; as they step out, {b} is revealed."
+    camera: static camera
+    sound: footsteps and a camera shutter click
+  - id: jump
+    name: Jump Slam
+    status: candidate
+    category: action
+    path: "The subject of {a} crouches and leaps high out of the frame, the camera tilting up with the jump; the subject slams down with a shockwave of dust into {b}."
+    camera: tilt up with the jump, then a quick tilt down with a shake on landing
+    sound: a whoosh up and a heavy impact boom
+  - id: seamless
+    name: Seamless
+    status: candidate
+    category: seamless
+    path: "With no visible effect, {a} flows continuously into {b}: the composition, light and surroundings drift and re-form so naturally that there is never a cut, as if time bends."
+    camera: slow continuous push-in
+    sound: a gentle ambient swell
+  - id: truck
+    name: Truck Pass
+    status: trial
+    category: wipe
+    path: "A huge truck roars across the frame right in front of the camera, completely blocking {a}; once it has passed, {b} is revealed."
+    camera: static camera with a shake as the truck passes
+    sound: a loud engine roar passing by
+  - id: beast
+    name: Beast
+    status: candidate
+    category: vfx
+    path: "The subject of {a} hunches forward as dark fur and powerful muscles ripple over them in a primal transformation, a roar shaking the frame; the creature rears up and its form resolves into {b}."
+    camera: slow push-in with a shake on the roar
+    sound: a deep animal roar and rumbling
+  - id: intermission
+    name: Intermission Card
+    status: deferred
+    category: retro
+    path: "{a} freezes and is covered by a vintage film intermission card with film grain, flicker and a burnt-film edge; the card slides away to reveal {b}."
+    camera: static camera
+    sound: a film projector rattle and a short retro chime
+  - id: passerby
+    name: Passerby
+    status: candidate
+    category: wipe
+    path: "An elderly man in a hat strolls slowly across the foreground in front of {a}, glancing at the camera; as he walks out of frame, {b} is behind him."
+    camera: static camera
+    sound: slow footsteps and a cheerful whistle
+  - id: earth_wave
+    name: Earth Wave
+    status: trial
+    category: elemental
+    path: "{a} crumbles into soil and stones that surge across the ground as a rolling wave of earth, which rises and settles into {b}."
+    camera: low-angle tracking shot
+    sound: rumbling earth and tumbling rocks

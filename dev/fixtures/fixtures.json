@@ -1,0 +1,110 @@
+{
+ "p1_a": {
+  "w": 720,
+  "h": 1280,
+  "seed": 101,
+  "text": "Medium shot of a fictional young woman with short black hair wearing a red leather jacket, standing on a rainy neon-lit city street at night, facing the camera, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p1_a.png",
+  "job_id": "9e0c2cf6-5a0c-4e80-b7c1-8e2f5dc99b15",
+  "model": "z_image_turbo_bf16"
+ },
+ "p1_b": {
+  "w": 720,
+  "h": 1280,
+  "seed": 102,
+  "text": "Medium shot of a fictional young woman with short black hair wearing a flowing white summer dress, standing on a sandy beach at golden-hour sunset, facing the camera, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p1_b.png",
+  "job_id": "9312ab4f-4350-401e-b64a-55c8c794b5d2",
+  "model": "z_image_turbo_bf16"
+ },
+ "p2_a": {
+  "w": 1280,
+  "h": 720,
+  "seed": 201,
+  "text": "Product shot of a clean white sneaker resting on wet dark concrete, soft studio rim light, centered, shallow depth of field, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p2_a.png",
+  "job_id": "3749bb09-7f67-4dc4-a451-d3d014ebfc32",
+  "model": "z_image_turbo_bf16"
+ },
+ "p2_b": {
+  "w": 1280,
+  "h": 720,
+  "seed": 202,
+  "text": "Product shot of a glossy ceramic coffee cup resting on a mossy rock in a misty jungle, soft dappled light, centered, shallow depth of field, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p2_b.png",
+  "job_id": "a699a9c5-2073-4f41-9553-1c1384e87ab6",
+  "model": "z_image_turbo_bf16"
+ },
+ "p3_a": {
+  "w": 720,
+  "h": 1280,
+  "seed": 301,
+  "text": "Medium shot of a fictional middle-aged man with curly brown hair wearing a green hoodie, standing on a snowy mountain trail on an overcast morning, facing the camera, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p3_a.png",
+  "job_id": "7f1e6e66-6c48-4e4d-bd6a-79724922a805",
+  "model": "z_image_turbo_bf16"
+ },
+ "p3_b": {
+  "w": 720,
+  "h": 1280,
+  "seed": 302,
+  "text": "Medium shot of a fictional middle-aged man with curly brown hair wearing a tan linen shirt, standing in a sunny open-air market street at noon, facing the camera, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p3_b.png",
+  "job_id": "bdf407fa-db80-4df0-840a-94fbe274a5dd",
+  "model": "z_image_turbo_bf16"
+ },
+ "p4_a": {
+  "w": 1280,
+  "h": 720,
+  "seed": 401,
+  "text": "Product shot of a red vintage bicycle leaning against a weathered brick wall at dawn, soft side light, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p4_a.png",
+  "job_id": "3d1c54b1-fc8a-4fd8-88bf-bd0714d9eb2d",
+  "model": "z_image_turbo_bf16"
+ },
+ "p4_b": {
+  "w": 1280,
+  "h": 720,
+  "seed": 402,
+  "text": "Product shot of a sleek blue electric scooter standing on a concrete rooftop at dusk with city lights behind, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p4_b.png",
+  "job_id": "85a1578f-c851-4ac7-9821-17f87d65f851",
+  "model": "z_image_turbo_bf16"
+ },
+ "p5_a": {
+  "w": 720,
+  "h": 1280,
+  "seed": 501,
+  "text": "Medium shot of a fictional young woman with long braided hair wearing a denim jacket, standing in an autumn park with orange leaves, facing the camera, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p5_a.png",
+  "job_id": "e11166fc-b88d-4067-8a08-9eaab6c0aa62",
+  "model": "z_image_turbo_bf16"
+ },
+ "p5_b": {
+  "w": 720,
+  "h": 1280,
+  "seed": 502,
+  "text": "Medium shot of a fictional young woman with long braided hair wearing a black evening gown, standing on a city rooftop at night with string lights, facing the camera, centered, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p5_b.png",
+  "job_id": "81104296-3157-4451-ab85-a9446bb1206e",
+  "model": "z_image_turbo_bf16"
+ },
+ "p6_a": {
+  "w": 1280,
+  "h": 720,
+  "seed": 601,
+  "text": "Product shot of a square glass perfume bottle with a gold cap on white marble, bright studio light, centered, shallow depth of field, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p6_a.png",
+  "job_id": "385720ec-3723-4bc1-881e-7db1406b8d70",
+  "model": "z_image_turbo_bf16"
+ },
+ "p6_b": {
+  "w": 1280,
+  "h": 720,
+  "seed": 602,
+  "text": "Product shot of the same square glass perfume bottle with a gold cap on a black volcanic rock with ocean spray, moody overcast light, centered, shallow depth of field, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p6_b.png",
+  "job_id": "77b0ad86-c2d6-4789-a44c-bf69b0afba75",
+  "model": "z_image_turbo_bf16"
+ }
+}

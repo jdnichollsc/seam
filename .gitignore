@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv
+
+# Web
+web/node_modules/
+src/seam/static/web/
+
+# Dev/research work stays local: only the qualification record and the test images are published
+research/
+dev/*
+!dev/PRESET_REVIEW.md
+!dev/fixtures/
+dev/fixtures/*
+!dev/fixtures/fixtures.json
+!dev/fixtures/p[1-6]_[ab].png
+
+# Local runtime data (default lives in ~/.seam, this covers in-repo overrides)
+.seam/

@@ -1,0 +1,34 @@
+[project]
+name = "seam"
+version = "0.1.0"
+description = "Seam: AI video transitions between two shots, open models on your own GPU via ComfyUI + Comfy SDK. Web app, CLI and MCP server."
+authors = [
+    { name = "jdnichollsc", email = "jdnichollsc@hotmail.com" }
+]
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "comfy-sdk>=0.5.0",
+    "fastapi>=0.143.3",
+    "httpx>=0.28.1",
+    "mcp>=2.3.0",
+    "numpy>=2.5.4",
+    "pillow>=13.0.0",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+seam = "seam:main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.1",
+]

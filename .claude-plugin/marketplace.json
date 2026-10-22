@@ -1,0 +1,11 @@
+{
+  "name": "seam",
+  "owner": { "name": "jdnichollsc" },
+  "plugins": [
+    {
+      "name": "seam",
+      "source": "./",
+      "description": "AI video transitions between two shots with open models on your own GPU (ComfyUI + Comfy SDK): skill + MCP server."
+    }
+  ]
+}

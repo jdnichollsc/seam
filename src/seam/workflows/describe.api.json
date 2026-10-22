@@ -1,0 +1,11 @@
+{
+  "1": {"class_type": "CLIPLoader", "_meta": {"title": "Gemma-4 E2B (the LTX-2.5 prompt enhancer)"},
+        "inputs": {"clip_name": "gemma4_e2b_it_int8_convrot.safetensors", "type": "ltxv", "device": "default"}},
+  "2": {"class_type": "LoadImage", "_meta": {"title": "Shot"},
+        "inputs": {"image": "shot.png"}},
+  "3": {"class_type": "TextGenerate", "_meta": {"title": "Read the shot"},
+        "inputs": {"clip": ["1", 0], "image": ["2", 0], "prompt": "", "max_length": 160, "sampling_mode": "off",
+                   "thinking": false, "use_default_template": true, "mtp": "auto"}},
+  "4": {"class_type": "SaveText", "_meta": {"title": "Shot text"},
+        "inputs": {"text": ["3", 0], "filename_prefix": "seam_describe", "format": "txt"}}
+}

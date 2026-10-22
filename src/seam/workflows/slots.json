@@ -1,0 +1,127 @@
+{
+  "_doc": "Named parameters -> [node_id, input] per API workflow. Generated from graph tracing on 2026-10-17. Runtime injection only through these maps. 'describe' is not a video model: it reads one shot (Gemma-4 E2B) for the prompt templates.",
+  "l23": {
+    "workflow": "l23_transition.api.json",
+    "output_node": "68",
+    "fps": 25,
+    "slots": {
+      "image_a": [
+        "138",
+        "image"
+      ],
+      "image_b": [
+        "137",
+        "image"
+      ],
+      "prompt": [
+        "139:128",
+        "text"
+      ],
+      "negative": [
+        "139:112",
+        "text"
+      ],
+      "seed": [
+        "139:100",
+        "noise_seed"
+      ],
+      "width": [
+        "139:113",
+        "value"
+      ],
+      "height": [
+        "139:98",
+        "value"
+      ],
+      "seconds": [
+        "139:143",
+        "value"
+      ],
+      "fps": [
+        "139:114",
+        "value"
+      ],
+      "lora_strength": [
+        "139:129",
+        "strength_model"
+      ],
+      "guide_first": [
+        "139:115",
+        "strength"
+      ],
+      "guide_last": [
+        "139:111",
+        "strength"
+      ]
+    }
+  },
+  "l25": {
+    "workflow": "l25_flf2v.api.json",
+    "output_node": "68",
+    "fps": 24,
+    "slots": {
+      "image_a": [
+        "31",
+        "image"
+      ],
+      "image_b": [
+        "39",
+        "image"
+      ],
+      "prompt": [
+        "251:252",
+        "value"
+      ],
+      "negative": [
+        "251:217",
+        "text"
+      ],
+      "seed": [
+        "251:196",
+        "noise_seed"
+      ],
+      "width": [
+        "251:215",
+        "value"
+      ],
+      "height": [
+        "251:216",
+        "value"
+      ],
+      "seconds": [
+        "251:198",
+        "value"
+      ],
+      "fps": [
+        "251:205",
+        "value"
+      ],
+      "enhance_prompt": [
+        "251:250",
+        "value"
+      ],
+      "guide_first": [
+        "251:206",
+        "strength"
+      ],
+      "guide_last": [
+        "251:204",
+        "strength"
+      ]
+    }
+  },
+  "describe": {
+    "workflow": "describe.api.json",
+    "output_node": "4",
+    "slots": {
+      "image": [
+        "2",
+        "image"
+      ],
+      "prompt": [
+        "3",
+        "prompt"
+      ]
+    }
+  }
+}
