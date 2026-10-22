@@ -7,10 +7,10 @@ command that proves it worked. The last step, `seam doctor`, checks everything a
 
 | | Minimum | Tested on |
 |---|---|---|
-| GPU | NVIDIA, 24 GB VRAM (32 GB recommended) | RTX 5090 32 GB, driver 617 |
+| GPU | NVIDIA, 32 GB VRAM (24 GB expected to work with offloading, untested) | RTX 5090 32 GB, driver 617 |
 | RAM | 64 GB (model offloading) | 128 GB |
 | Disk | ~50 GB free for models (~90 GB with the optional LTX-2.3 set) | NVMe |
-| OS | Windows 10/11 or Linux | Windows 11 |
+| OS | Windows 11 (Linux expected to work, untested) | Windows 11 |
 | Software | ComfyUI ≥ 0.41.3, Python 3.12, `uv`, Node 20+, ffmpeg, Git | ComfyUI Desktop 0.41.3 |
 | Account | Hugging Face account (LTX-2.5 is gated) | — |
 
@@ -47,7 +47,7 @@ Seam talks to ComfyUI through the official **Comfy SDK**, which speaks the Comfy
 served by the official proxy in front of ComfyUI:
 
 ```bash
-uv tool install comfy-api-proxy
+uv tool install comfy-api-proxy==0.1.6   # tested with 0.1.6 and comfy-sdk 0.5.0 (locked in uv.lock)
 comfy-api-proxy start --comfyui http://127.0.0.1:8188     # serves http://127.0.0.1:8189, local only
 curl http://127.0.0.1:8189/api/v2/health
 ```

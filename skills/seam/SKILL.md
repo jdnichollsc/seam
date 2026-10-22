@@ -7,7 +7,7 @@ description: Make a short video that transitions from one image to another with 
 
 Seam takes a **first shot** (image A) and a **last shot** (image B) and renders a ~5 s clip that travels from A
 to B through an effect. It runs on the user's own GPU (ComfyUI + Comfy SDK, open-weights LTX models). One job
-renders at a time; a clip takes about a minute on an RTX 5090.
+renders at a time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the first run, while models load).
 
 ## Before anything
 

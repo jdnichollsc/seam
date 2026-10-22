@@ -39,13 +39,13 @@ def _fake_comfy(installed: set[str]):
     return get
 
 
-def _run(monkeypatch, tmp_path: Path, installed: set[str]) -> int:
+def _run(monkeypatch, tmp_path: Path, installed: set[str], get=None) -> int:
     from seam import doctor, media
 
     (tmp_path / "static" / "web").mkdir(parents=True)
     (tmp_path / "static" / "web" / "index.html").write_text("ok")
     monkeypatch.setattr(doctor, "PACKAGE_DIR", tmp_path)
-    monkeypatch.setattr(doctor, "_get", _fake_comfy(installed))
+    monkeypatch.setattr(doctor, "_get", get or _fake_comfy(installed))
     monkeypatch.setattr(media, "_ensure_ffmpeg", lambda: None)
     monkeypatch.setattr(doctor.shutil, "which", lambda _: "ffprobe")
     monkeypatch.delenv("SEAM_SHOW_CANDIDATES", raising=False)
@@ -73,3 +73,17 @@ def test_choices_reads_both_combo_forms() -> None:
     legacy = {"VAELoader": {"input": {"required": {"vae_name": [["a.safetensors"], {}]}}}}
     v3 = {"VAELoader": {"input": {"required": {"vae_name": ["COMBO", {"options": ["a.safetensors"]}]}}}}
     assert _choices(legacy, "VAELoader", "vae_name") == _choices(v3, "VAELoader", "vae_name") == ["a.safetensors"]
+
+
+def test_doctor_names_a_missing_core_node_instead_of_a_download(monkeypatch, tmp_path: Path, capsys) -> None:
+    fake = _fake_comfy(_files("l25", "describe"))
+    old_comfy = lambda url: {} if url.endswith("/TextGenerate") else fake(url)  # noqa: E731
+    assert _run(monkeypatch, tmp_path, set(), get=old_comfy) == 1
+    out = capsys.readouterr().out
+    assert "FAIL ComfyUI has the core node TextGenerate" in out and "update ComfyUI" in out
+
+
+def test_doctor_reports_an_unreachable_comfyui_once(monkeypatch, tmp_path: Path, capsys) -> None:
+    assert _run(monkeypatch, tmp_path, set(), get=lambda url: None) == 1
+    out = capsys.readouterr().out
+    assert out.count("FAIL ComfyUI reachable") == 1 and "download_models" not in out

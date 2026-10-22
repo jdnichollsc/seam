@@ -23,7 +23,7 @@ server = MCPServer(
         "(smoke, water bend, whip pan, ...), rendered locally on ComfyUI with open-weights models. "
         "Typical flow: list_presets → create_transition(local image paths, preset) → wait_job → "
         "preview_job to look at the result → refine_job to change preset/prompt/seed. Jobs run one at a "
-        "time; a 5 s clip takes about a minute on an RTX 5090. Always show the user the preview."
+        "time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the first run). Always show the user the preview."
     ),
 )
 

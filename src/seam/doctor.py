@@ -72,23 +72,35 @@ def run_doctor() -> int:
 
     presets = load_presets(s.presets_file)
     needed = required_workflows(presets, s.model, Engine.exposed_statuses())
-    info_cache: dict[str, dict | None] = {}
-    for model in sorted(json.loads((s.workflows_dir / "slots.json").read_text(encoding="utf-8")).keys() - {"_doc"}):
-        spec = load_spec(s.workflows_dir, model)
-        missing = []
-        for node, field, filename in model_files(spec.graph()):
-            if node not in info_cache:
-                info_cache[node] = _get(f"{comfyui}/object_info/{node}")
-            present = filename in _choices(info_cache[node], node, field)
-            if model in needed:
-                check(present, f"{model}: {filename}",
-                      f"run `python scripts/download_models.py --models-dir <ComfyUI>/models --only "
-                      f"{DOWNLOAD_SET.get(model, model)}` (ComfyUI must be running at {comfyui} for this check)")
-            elif not present:
-                missing.append(filename)
-        if model not in needed:
-            print(f"  info {model}: optional - not used by the launch effects"
-                  + (f" ({len(missing)} file(s) not installed)" if missing else " (installed)"))
+    workflows = sorted(json.loads((s.workflows_dir / "slots.json").read_text(encoding="utf-8")).keys() - {"_doc"})
+    graphs = {m: load_spec(s.workflows_dir, m).graph() for m in workflows}
+    info: dict[str, dict | None] = {}
+    for cls in sorted({n["class_type"] for m in needed for n in graphs[m].values()}):
+        info[cls] = _get(f"{comfyui}/object_info/{cls}")
+        if info[cls] is None:  # nothing answers: one clear failure instead of a download hint per file
+            check(False, f"ComfyUI reachable at {comfyui}", "start ComfyUI (or set SEAM_COMFYUI_URL)")
+            break
+    else:
+        nodes_ok = {cls: cls in (i or {}) for cls, i in info.items()}
+        for cls in sorted(c for c, present in nodes_ok.items() if not present):
+            check(False, f"ComfyUI has the core node {cls}", "update ComfyUI to >= 0.41.3 (Desktop: update the app)")
+        for model in workflows:
+            missing = []
+            for node, field, filename in model_files(graphs[model]):
+                if model in needed and not nodes_ok.get(node, False):
+                    continue  # already reported as a missing node; a download would not fix it
+                if node not in info:
+                    info[node] = _get(f"{comfyui}/object_info/{node}")
+                present = filename in _choices(info[node], node, field)
+                if model in needed:
+                    check(present, f"{model}: {filename}",
+                          f"run `python scripts/download_models.py --models-dir <ComfyUI>/models --only "
+                          f"{DOWNLOAD_SET.get(model, model)}`")
+                elif not present:
+                    missing.append(filename)
+            if model not in needed:
+                print(f"  info {model}: optional - not used by the launch effects"
+                      + (f" ({len(missing)} file(s) not installed)" if missing else " (installed)"))
 
     for model in sorted(needed):
         check(not missing_slots(load_spec(s.workflows_dir, model)), f"{model}: workflow slot map matches the graph",
@@ -97,5 +109,5 @@ def run_doctor() -> int:
     check(len(launch) >= 3, f"{len(presets)} presets loaded, {len(launch)} qualified for launch (need 3+)", "reinstall")
     check((PACKAGE_DIR / "static" / "web" / "index.html").exists(), "web app built",
           "cd web && npm install && npm run build")
-    print("ready" if ok else "not ready — fix the items above")
+    print("ready" if ok else "not ready - fix the items above")
     return 0 if ok else 1

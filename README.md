@@ -13,6 +13,34 @@ It is an open-source take on the popular "transitions" apps, built for the
   packaged as a Claude Code plugin (`.claude-plugin/`) and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin
   (`plugin.json` + `mcp.json` + `skills/`) for other compatible agents.
 
+## The three effects
+
+First shot → Seam → last shot. Fictional test images; real takes from the qualification run (seed 1).
+
+| First shot | Smoke | Water bend | Whip pan | Last shot |
+|---|---|---|---|---|
+| <img src="docs/media/p1_a.webp" width="120"> | <img src="docs/media/smoke.webp" width="120"> | <img src="docs/media/water_bend.webp" width="120"> | <img src="docs/media/whip_pan.webp" width="120"> | <img src="docs/media/p1_b.webp" width="120"> |
+
+Only effects that passed the same check ship: played and approved on two image pairs (a person, a product), two
+seeds, with Seam's own shot reading, then one take on each of four unseen pairs spread across the three effects
+([dev/PRESET_REVIEW.md](dev/PRESET_REVIEW.md)).
+More effects ship only if they pass it too.
+
+**Measured** (RTX 5090 32 GB, Windows 11, ComfyUI Desktop 0.41.3; 5 s clips at 1280×704 or 704×1280):
+
+| Effect | Takes | Render time, median (min–max) |
+|---|---|---|
+| Smoke | 10 | 41 s (30–46 s) |
+| Water bend | 9 | 40 s (30–41 s) |
+| Whip pan | 9 | 41 s (30–56 s) |
+
+Render time runs from submit to finished video, including LTX-2.5's prompt enhancer and any model loading (the
+slowest takes were the first after a load). Reading the two shots (~1 s each, cached) comes on top. Peak VRAM was ~31 GB on a 32 GB
+card; 24 GB cards should work through ComfyUI's offloading (64 GB RAM) but are untested.
+
+**Status:** tested on Windows 11 with one RTX 5090. Linux, macOS and smaller GPUs are untested. The web app, CLI
+and MCP server run against a local ComfyUI; Comfy Cloud should work by changing `COMFY_BASE_URL` but is untested.
+
 ## How it works
 
 ```
@@ -36,7 +64,7 @@ browser / CLI / Claude (MCP)
 
 ## Install
 
-See **[install.md](install.md)** (≈44 GB of models, NVIDIA GPU with 24 GB+ VRAM). Quick check: `uv run seam doctor`.
+See **[install.md](install.md)** (≈44 GB of models, NVIDIA GPU with 32 GB VRAM tested). Quick check: `uv run seam doctor`.
 
 ## Models and licenses
 
