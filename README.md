@@ -189,7 +189,6 @@ browser / CLI / agent (MCP)
 | FastAPI · SQLite · ffmpeg | the Seam server, job store, clip normalization and joins |
 | React · GSAP · three.js | the web studio, its motion, and the 3D-model studio |
 | MCP · Agent skills | the agent plugin (Claude Code, Agent Plugins) |
-| Claude Code | pair-built with it: code, reviews and the demo edit |
 
 ## Models and licenses
 
