@@ -306,7 +306,7 @@ function Slot({ label, side, value, busy, onFile, onClear }: SlotProps) {
           <img src={uploadUrl(value.id)} alt={`${label}`} />
           {value.clip && (
             <span className="slot-clip" title={side === 'a' ? 'The transition starts from its last frame' : 'The transition lands on its first frame'}>
-              Clip {value.clip_seconds?.toFixed(1)} s
+              Clip{value.clip_seconds ? ` ${value.clip_seconds.toFixed(1)} s` : ''}
             </span>
           )}
           <button className="slot-clear" onClick={onClear} aria-label={`Remove ${label.toLowerCase()}`}>
