@@ -22,3 +22,6 @@ dev/fixtures/*
 
 # Local runtime data (default lives in ~/.seam, this covers in-repo overrides)
 .seam/
+
+# Design tooling state (impeccable): local only
+.impeccable/

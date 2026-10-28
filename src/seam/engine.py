@@ -16,13 +16,15 @@ from typing import Any
 from comfy_sdk import Comfy, Progress, StatusChange
 
 from . import describe as shots
-from . import media
+from . import media, receipt
 from .config import Settings
 from .describe import ShotText
 from .jobs import JobRecord, JobStore
 from .presets import Preset, load_presets, render_prompt
 from .workflows import WorkflowSpec, build, load_spec
 
+SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may still have rendered there "
+                  "(check ComfyUI's queue/output). Use New take to render it again.")
 SECONDS_CHOICES = (5,)  # 8 s ships only after it passes the P0 gate
 PUBLIC_MODELS = ("l25", "l23")  # LTX family only: other models were research-only and never ship
 
@@ -42,6 +44,8 @@ class TransitionRequest:
     b_ref: str | None = None
     enhance: bool = True        # in-graph prompt enhancer (open, local)
     model: str | None = None    # override the preset's model (l25 | l23)
+    clip_a: str | None = None   # optional clips around the transition: image_a is clip_a's last frame,
+    clip_b: str | None = None   # image_b is clip_b's first frame, and the result is clip A + transition + clip B
 
     def to_params(self) -> dict[str, Any]:
         return {k: v for k, v in self.__dict__.items()}
@@ -68,6 +72,10 @@ class Engine:
             if job.status in ("queued", "running"):
                 if job.comfy_job_id:  # re-attach instead of resubmitting
                     self._queue.put(job.id)
+                elif job.extra.get("submitting_at"):
+                    # died between sending the graph and recording its id: ComfyUI may still render it,
+                    # and resubmitting could render it twice, so say so instead of guessing
+                    self.store.update(job.id, status="interrupted", error=SUBMIT_UNKNOWN)
                 else:
                     self.store.update(job.id, status="interrupted", error="server restarted before submission")
         self._worker.start()
@@ -99,11 +107,15 @@ class Engine:
             raise ValueError(f"unknown preset {req.preset!r}; choose one of {sorted(self.exposed_presets())}")
         if self.model_for(req) not in self.enabled_models():
             raise ValueError(f"model {self.model_for(req)!r} is not enabled; available: {self.enabled_models()}")
+        preset = self.presets[req.preset]
+        if preset.status == "launch" and preset.model and self.model_for(req) != preset.model:
+            # qualification was judged on one model; another model renders an unreviewed effect
+            raise ValueError(f"effect {req.preset!r} is qualified on model {preset.model!r} only")
         if req.seconds not in SECONDS_CHOICES:
             raise ValueError(f"seconds must be one of {SECONDS_CHOICES}")
-        for p in (req.image_a, req.image_b):
-            if not Path(p).is_file():
-                raise ValueError(f"image not found: {p}")
+        for p in (req.image_a, req.image_b, req.clip_a, req.clip_b):
+            if p and not Path(p).is_file():
+                raise ValueError(f"file not found: {Path(p).name}")
 
     def submit(self, req: TransitionRequest, parent_id: str | None = None) -> JobRecord:
         if req.seed is None:
@@ -211,6 +223,9 @@ class Engine:
                 # P0: the in-graph enhancer (local Gemma-4 E2B) fixes LTX-2.5 dissolves and end-jumps
                 params["enhance_prompt"] = req.enhance
             wf = build(self.client, spec, Path(req.image_a), Path(req.image_b), params)
+            # keep the exact graph this take runs, so its receipt and ComfyUI bundle never follow later template edits
+            receipt.archive_graph(job.id, spec, params, self.settings.outputs_dir)
+            self.store.update(job.id, extra={**self.store.get(job.id).extra, "submitting_at": time.time()})
             handle = self.client.submit(wf)
             self.store.update(job.id, status="running", comfy_job_id=handle.id,
                               extra={**self.store.get(job.id).extra, "prompt": prompt, "width": width, "height": height,
@@ -236,11 +251,57 @@ class Engine:
         media.poster(mp4, out_dir / f"{job.id}.jpg")
         media.contact_sheet(mp4, out_dir / f"{job.id}_sheet.png")
         info = media.probe(mp4)
+        merged, merge_error = None, None
+        if req.clip_a or req.clip_b:  # clip A + transition + clip B, the take the user asked for
+            try:
+                merged = media.merge_clips(mp4, out_dir / f"{job.id}_full.mp4", Path(req.clip_a) if req.clip_a else None,
+                                           Path(req.clip_b) if req.clip_b else None).name
+            except Exception as e:  # noqa: BLE001 — the transition rendered; keep it rather than fail the take
+                merge_error = f"could not join the clips: {type(e).__name__}: {e}"[:300]
         self.store.update(job.id, status="succeeded", progress=1.0, output=mp4.name, poster=f"{job.id}.jpg",
                           sheet=f"{job.id}_sheet.png",
                           wall_s=round(time.time() - self.store.get(job.id).extra.get("submitted_at", time.time() - (time.monotonic() - t0)), 1),
                           extra={**self.store.get(job.id).extra, "duration": info.duration, "fps": info.fps,
-                                 "has_audio": info.has_audio})
+                                 "has_audio": info.has_audio, **({"merged": merged} if merged else {}),
+                                 **({"merge_error": merge_error} if merge_error else {})})
+        try:
+            self.write_receipt(job.id)
+        except Exception:  # noqa: BLE001 — the take is done; the receipt is rebuilt on request
+            pass
+
+    def write_receipt(self, job_id: str) -> Path:
+        """<id>.receipt.json next to the take: inputs (sha256), prompt, seed, model, graph."""
+        job = self.store.get(job_id)
+        dst = self.settings.outputs_dir / f"{job.id}.receipt.json"
+        data = receipt.build_receipt(job, self.spec(self.model_for(TransitionRequest(**job.params))),
+                                     self.settings.outputs_dir)
+        dst.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return dst
+
+
+CLIP_FORMAT = b"seam-clip-v1:"  # bump when normalize_clip changes
+
+
+def store_clip(settings: Settings, src: Path) -> tuple[Path, float]:
+    """Keep an uploaded clip (content-addressed by the upload's bytes), normalized to one MP4 clock, after checking
+    it is a short video ffmpeg can read."""
+    import hashlib
+
+    settings.ensure_dirs()
+    # salted with the normalizer version, so clips stored by an older normalizer are never reused
+    dst = settings.uploads_dir / f"{hashlib.sha256(CLIP_FORMAT + src.read_bytes()).hexdigest()[:16]}.mp4"
+    if not dst.exists():
+        tmp = dst.with_name(f"{dst.stem}.{os.getpid()}.{threading.get_ident()}.mp4")
+        try:
+            media.normalize_clip(src, tmp)
+            seconds = media.probe(tmp).duration
+            lo, hi = media.CLIP_SECONDS
+            if not lo <= seconds <= hi:
+                raise ValueError(f"clips must be {lo:g}-{hi:g} s long (this one is {seconds:.1f} s)")
+            os.replace(tmp, dst)  # a concurrent identical upload never sees a half-written clip
+        finally:
+            tmp.unlink(missing_ok=True)
+    return dst, media.probe(dst).duration
 
 
 def store_upload(settings: Settings, src: Path, name_hint: str = "upload") -> Path:

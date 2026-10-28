@@ -7,7 +7,8 @@ No accounts, no credits.
 It is an open-source take on the popular "transitions" apps, built for the
 [Open Source Higgsfield](https://comfy.org/open-source-higgsfield) challenge on the Comfy Developer Platform.
 
-- **Web app**: drop two images, pick an effect, watch it render, download, make another take.
+- **Web app**: drop two images or two short clips, pick an effect (or "Surprise me"), watch it render, download,
+  make another take, or open the take in ComfyUI.
 - **CLI**: `seam make first.png last.png --preset smoke`.
 - **Agent plugin**: the Seam skill + MCP server so an agent can plan, render, review and refine transitions for you —
   packaged as a Claude Code plugin (`.claude-plugin/`) and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin
@@ -61,6 +62,17 @@ browser / CLI / Claude (MCP)
 - Workflows are the official ComfyUI templates exported to API format; Seam only touches them through a named
   slot map, with a test that fails if the template drifts.
 - Jobs persist in SQLite and survive a server restart (they re-attach to the running ComfyUI job).
+- **Clips in, clips out:** either side can be a 1–6 s clip. The transition starts from clip A's last frame and lands
+  on clip B's first, through the same qualified graph, and Seam joins clip A + transition + clip B with ffmpeg.
+- **Every take is reproducible:** a receipt (input hashes, effect, model, seed, final prompt, graph hash) and a
+  one-click **Open in ComfyUI** bundle: the exact API workflow plus both stills, runnable in plain ComfyUI.
+
+## Why generative, not a 2D blend
+
+Code-based tools (FFmpeg `xfade`, Remotion, HyperFrames) blend two flat frames: a wipe or a dissolve, exact and
+fast, but they cannot invent what is between the shots. Seam asks a video model for the in-between: smoke that
+really occludes the subject, water that reshapes into the next scene, a pan with real parallax and motion blur.
+Those tools are a good assembly layer around Seam's clips, not a replacement for them.
 
 ## Install
 

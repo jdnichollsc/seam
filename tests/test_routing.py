@@ -34,7 +34,7 @@ def test_preset_model_routing(engine: Engine, images) -> None:
     a, b = images
     assert engine.model_for(TransitionRequest(a, b, "fire")) == "l23"
     assert engine.model_for(TransitionRequest(a, b, "whip_pan")) == "l25"
-    assert engine.model_for(TransitionRequest(a, b, "smoke")) == "l25"  # settings default
+    assert engine.model_for(TransitionRequest(a, b, "smoke")) == "l25"  # bound in presets.yaml
     assert engine.model_for(TransitionRequest(a, b, "fire", model="l25")) == "l25"  # explicit override
 
 
@@ -62,3 +62,14 @@ def test_submit_pins_model_and_refine_follows_new_preset(engine: Engine, images)
     assert child.parent_id == job.id and child.params["model"] == "l25"
     same = engine.refine(job.id, {"prompt_extra": "slower"})
     assert same.params["model"] == "l23" and same.params["seed"] != job.params["seed"]
+
+
+def test_launch_presets_are_locked_to_their_qualified_model(engine: Engine, images) -> None:
+    a, b = images
+    launch = [p for p in engine.presets.values() if p.status == "launch"]
+    assert launch and all(p.model for p in launch)  # qualification is bound to a model, not to SEAM_MODEL
+    with pytest.raises(ValueError, match="qualified on model 'l25' only"):
+        engine.validate(TransitionRequest(a, b, "smoke", model="l23"))
+    engine.settings = replace(engine.settings, model="l23")  # a different default must not reroute a launch effect
+    assert engine.model_for(TransitionRequest(a, b, "water_bend")) == "l25"
+    engine.validate(TransitionRequest(a, b, "whip_pan"))

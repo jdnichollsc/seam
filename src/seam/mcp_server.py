@@ -39,13 +39,17 @@ async def _req(method: str, path: str, **kw: Any) -> Any:
         return r.json()
 
 
-async def _upload(path: str) -> str:
+VIDEO_TYPES = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}
+
+
+async def _upload(path: str, role: str) -> dict[str, Any]:
+    """Upload an image, or a 1-6 s clip (role a: the transition starts from its last frame; b: lands on its first)."""
     p = Path(path).expanduser()
     if not p.is_file():
-        raise ValueError(f"image not found: {p}")
+        raise ValueError(f"file not found: {p}")
+    kind = VIDEO_TYPES.get(p.suffix.lower(), "application/octet-stream")
     with p.open("rb") as fh:
-        data = await _req("POST", "/api/uploads", files={"file": (p.name, fh, "application/octet-stream")})
-    return data["id"]
+        return await _req("POST", f"/api/uploads?role={role}", files={"file": (p.name, fh, kind)})
 
 
 def _brief(job: dict[str, Any]) -> dict[str, Any]:
@@ -58,6 +62,8 @@ def _brief(job: dict[str, Any]) -> dict[str, Any]:
             out[k] = job["params"][k]
     if job.get("output"):
         out["video_url"] = f"{BASE}/outputs/{job['output']}"
+    if job.get("merged_url"):
+        out["merged_url"] = f"{BASE}{job['merged_url']}"
     return out
 
 
@@ -79,14 +85,16 @@ async def create_transition(image_a: str, image_b: str, preset: str, seed: int |
                             a_ref: str | None = None, b_ref: str | None = None) -> dict[str, Any]:
     """Queue a transition video from image A (first frame) to image B (last frame).
 
-    image_a / image_b: local file paths. preset: an id from list_presets. prompt_extra: extra direction appended
+    image_a / image_b: local file paths to images, or to short clips (1-6 s .mp4/.mov/.webm): with a clip, the
+    transition starts from the last frame of clip A / lands on the first frame of clip B, and the job also gets a
+    merged video (clip A + transition + clip B, `merged_url`). preset: an id from list_presets. prompt_extra: extra direction appended
     to the preset. Seam reads both shots itself (local model) to describe them in the prompt; pass a_desc / b_desc
     only to correct that reading — a noun phrase like "a young woman with a calm smile in a red jacket on a rainy
     street at night" — and a_ref / b_ref as short labels like "the woman in the red jacket". "" means describe
     nothing. Returns the job (with the descriptions used once it starts); follow with wait_job.
     """
-    a, b = await asyncio.gather(_upload(image_a), _upload(image_b))
-    body = {"image_a": a, "image_b": b, "preset": preset, "seed": seed, "prompt_extra": prompt_extra,
+    a, b = await asyncio.gather(_upload(image_a, "a"), _upload(image_b, "b"))
+    body = {"image_a": a["id"], "image_b": b["id"], "clip_a": a.get("clip"), "clip_b": b.get("clip"), "preset": preset, "seed": seed, "prompt_extra": prompt_extra,
             "a_desc": a_desc, "b_desc": b_desc, "a_ref": a_ref, "b_ref": b_ref}
     return _brief(await _req("POST", "/api/transitions", json=body))
 
@@ -118,13 +126,14 @@ async def list_jobs(limit: int = 10) -> list[dict[str, Any]]:
 
 @server.tool()
 async def preview_job(job_id: str) -> Image:
-    """Contact sheet (8 frames across the clip) of a succeeded job. Judge these frames before re-reading the job's
-    prompt or descriptions: the job's text says what was asked, not what the clip shows."""
+    """Two-row contact sheet of a succeeded job: row 1 = 8 frames across the whole clip, row 2 = 8 frames from 30% to
+    70% of it, where the effect does its work. Judge these frames before re-reading the job's prompt or
+    descriptions: the job's text says what was asked, not what the clip shows."""
     job = await _req("GET", f"/api/jobs/{job_id}")
     if job["status"] != "succeeded":
         raise RuntimeError(f"job {job_id} is {job['status']}, no preview yet")
-    async with httpx.AsyncClient(base_url=BASE, timeout=60) as c:
-        r = await c.get(job["sheet_url"])
+    async with httpx.AsyncClient(base_url=BASE, timeout=120) as c:
+        r = await c.get(f"/api/jobs/{job_id}/review-sheet")
         r.raise_for_status()
     return Image(data=r.content, format="png")
 

@@ -8,7 +8,8 @@ export type Preset = {
   poster_url?: string
 }
 
-export type Upload = { id: string; url: string; width: number; height: number }
+/** An image, or a clip: then `id` is the frame the transition uses and `clip` the video around it. */
+export type Upload = { id: string; url: string; width: number; height: number; clip?: string; clip_url?: string; clip_seconds?: number }
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
@@ -31,8 +32,11 @@ export type Job = {
     b_desc?: string | null
     a_ref?: string | null
     b_ref?: string | null
+    clip_a?: string | null
+    clip_b?: string | null
   }
   output_url?: string
+  merged_url?: string
   poster_url?: string
   sheet_url?: string
   extra: { width?: number; height?: number; duration?: number; prompt?: string }
@@ -45,6 +49,9 @@ export type ShotText = { desc: string; ref: string }
 export type ShotFields = { a_desc?: string; b_desc?: string; a_ref?: string; b_ref?: string }
 
 export type Health = { ok: boolean; model: string; comfy_base_url: string; presets: number }
+
+/** Typical render time on this machine (median of recent takes); null before the first one. */
+export type Estimate = { seconds: number | null; samples: number }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(path, init)
@@ -65,13 +72,15 @@ export const api = {
   health: () => call<Health>('/api/health'),
   presets: () => call<Preset[]>('/api/presets'),
   jobs: () => call<Job[]>('/api/jobs?limit=60'),
-  upload: (file: File) => {
+  upload: (file: File, role: 'a' | 'b') => {
     const body = new FormData()
     body.append('file', file)
-    return call<Upload>('/api/uploads', { method: 'POST', body })
+    return call<Upload>(`/api/uploads?role=${role}`, { method: 'POST', body })
   },
   describe: (uploadId: string) => call<ShotText>(`/api/describe/${uploadId}`, { method: 'POST' }),
-  create: (body: { image_a: string; image_b: string; preset: string; seed?: number; prompt_extra?: string } & ShotFields) =>
+  create: (
+    body: { image_a: string; image_b: string; preset: string; seed?: number; prompt_extra?: string; clip_a?: string; clip_b?: string } & ShotFields,
+  ) =>
     call<Job>('/api/transitions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -84,7 +93,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   cancel: (id: string) => call<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
+  estimate: () => call<Estimate>('/api/estimate'),
 }
+
+/** How a take was made (JSON) and the same take as a ComfyUI workflow bundle (zip). */
+export const receiptUrl = (id: string) => `/api/jobs/${id}/receipt`
+export const comfyBundleUrl = (id: string) => `/api/jobs/${id}/comfyui.zip`
 
 /** Live job updates over server-sent events; returns an unsubscribe function. */
 export function subscribe(onJob: (job: Job) => void): () => void {

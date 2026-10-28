@@ -40,6 +40,16 @@ def missing_slots(spec: WorkflowSpec) -> list[str]:
             if node not in graph or field not in graph[node].get("inputs", {})]
 
 
+def export_graph(spec: WorkflowSpec, image_a: str, image_b: str, params: dict[str, Any]) -> dict[str, Any]:
+    """The API graph a job ran, filled through the same slots, with the two stills referenced by file name
+    (ComfyUI's input folder) instead of SDK uploads: opens and re-runs in plain ComfyUI."""
+    graph = spec.graph()
+    for name, value in {"image_a": image_a, "image_b": image_b, **params}.items():
+        node, field = spec.slots[name]
+        graph[node]["inputs"][field] = value
+    return graph
+
+
 def build(client: Comfy, spec: WorkflowSpec, image_a: Path, image_b: Path, params: dict[str, Any]) -> Workflow:
     unknown = set(params) - set(spec.slots)
     if unknown:

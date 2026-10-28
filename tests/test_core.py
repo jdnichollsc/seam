@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -116,3 +117,46 @@ def test_research_models_are_not_shipped() -> None:
     shipped = json.loads((WF / "slots.json").read_text(encoding="utf-8"))
     assert {k for k in shipped if not k.startswith("_")} == {"l25", "l23", "describe"}
     assert not any(f.name.startswith(("h3", "wan")) for f in WF.glob("*.api.json") if f.name != "wan22_flf2v.api.json")
+
+
+def test_review_sheet_has_whole_clip_and_middle_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    try:
+        media._ensure_ffmpeg()
+    except RuntimeError:
+        pytest.skip("ffmpeg not installed")
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=4:size=160x96:rate=24",
+                    "-pix_fmt", "yuv420p", str(clip)], check=True)
+    seen: list[float] = []
+    real = media.frame_at
+    monkeypatch.setattr(media, "frame_at", lambda v, t, h=None: (seen.append(t), real(v, t, h))[1])
+    out = media.review_sheet(clip, tmp_path / "sheet2.png", n=8, height=60)
+    with Image.open(out) as im:
+        assert im.height == 120 and im.width == 8 * 100  # 160x96 scaled to height 60 -> 100 wide
+    assert seen[0] == 0 and seen[7] == pytest.approx(3.95)  # row 1: whole clip
+    assert seen[8] == pytest.approx(1.2) and seen[15] == pytest.approx(2.8)  # row 2: 30%..70%
+    assert not (tmp_path / "sheet2.tmp.png").exists()
+
+
+def test_review_sheet_is_built_once_under_concurrent_requests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import time
+
+    from seam import server
+
+    calls: list[int] = []
+
+    def slow_build(video: Path, dst: Path) -> Path:
+        calls.append(1)
+        time.sleep(0.2)
+        dst.write_bytes(b"png")
+        return dst
+
+    monkeypatch.setattr(server.media, "review_sheet", slow_build)
+    dst = tmp_path / "x_sheet2.png"
+    threads = [threading.Thread(target=server._build_once, args=(tmp_path / "x.mp4", dst)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert calls == [1] and dst.read_bytes() == b"png"

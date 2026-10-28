@@ -27,6 +27,7 @@ presets:
     path: "Thick billowing smoke rolls in from the edges and swallows {a}; the smoke swirls and thins, revealing {b} as it clears."
     camera: slow push-in through the smoke
     sound: a deep whoosh of rolling smoke
+    model: l25          # qualified on LTX-2.5 + enhancer; launch presets are locked to their model
   - id: ink
     name: Ink Shadow
     status: candidate
@@ -115,6 +116,7 @@ presets:
     path: "{a} liquefies into clear rushing water that rises as a tall wave, curls through the frame and reshapes itself into {b} as the water settles."
     camera: static camera
     sound: rushing water and a soft splash
+    model: l25          # qualified on LTX-2.5 + enhancer
   - id: lava
     name: Lava
     status: candidate
