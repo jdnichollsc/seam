@@ -45,7 +45,7 @@ model runs on your machine and every take can be reopened, inspected and re-run 
 
 | | |
 |---|---|
-| **Generative, not a 2D blend** | Code tools (ffmpeg `xfade`, Remotion, HyperFrames) cross-fade two flat frames. Seam asks a video model for what is *between* the shots: smoke that really hides the subject, water that reshapes into the next scene, a pan with real parallax and motion blur. |
+| **Generative, not a 2D blend** | Code tools (ffmpeg `xfade`, Remotion) cross-fade two flat frames. Seam asks a video model for what is *between* the shots: smoke that really hides the subject, water that reshapes into the next scene, a pan with real parallax and motion blur. |
 | **Any shot in, even 3D** | Images, clips, or a `.glb` you frame in the browser and record as a camera orbit. Everything becomes the frame the transition leaves from or lands on, so clips and orbits stay continuous. |
 | **Open by default** | Open weights (LTX-2.5, Gemma-4 E2B), core ComfyUI nodes, the official Comfy SDK. Each take archives the exact graph it submitted; **Open in ComfyUI** downloads it with both shots, and a receipt says how it was made. |
 | **Only qualified effects ship** | An effect is exposed only after it plays well on two image pairs × two seeds, then on unseen pairs. Three passed; more ship only if they pass too. |
@@ -195,7 +195,6 @@ browser / CLI / agent (MCP)
 | FastAPI · SQLite · ffmpeg | the Seam server, job store, clip normalization and joins |
 | React · GSAP · three.js | the web studio, its motion, and the 3D-model studio |
 | MCP · Agent skills | the agent plugin (Claude Code, Agent Plugins) |
-| [HyperFrames](https://github.com/heygen-com/hyperframes) | the demo video (HTML + GSAP rendered to MP4) |
 | Claude Code | pair-built with it: code, reviews and the demo edit |
 
 ## Models and licenses
