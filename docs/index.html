@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seam — two shots in, one transition out</title>
+  <meta name="description" content="Seam makes a short video that travels from a first shot to a last one through an effect, rendered with open-weights LTX-2.5 on ComfyUI. Every take is a ComfyUI workflow." />
+  <meta name="theme-color" content="#211927" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <meta property="og:title" content="Seam — two shots in, one transition out" />
+  <meta property="og:description" content="Open-source video transitions on ComfyUI. Images, clips or 3D models in; LTX-2.5 on your GPU; every take a ComfyUI workflow." />
+  <meta property="og:image" content="media/site/og.jpg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="site.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#" aria-label="Seam">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="7" width="9" height="18" rx="2.5" /><rect x="19" y="7" width="9" height="18" rx="2.5" /><rect x="15" y="3" width="2" height="26" rx="1" /></svg>
+      <span class="tag tag-sm">Seam</span>
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#inputs">Inputs</a>
+      <a href="#effects">Effects</a>
+      <a href="#open">Open by default</a>
+      <a href="#run">Run it</a>
+    </nav>
+    <a class="btn btn-primary btn-sm" href="https://github.com/jdnichollsc/seam">GitHub</a>
+  </header>
+
+  <main>
+    <!-- Hero: the product is the graph. Two shot nodes feed the effect, the effect feeds the output. -->
+    <section class="hero" aria-labelledby="hero-title">
+      <h1 id="hero-title" class="hero-title">
+        <span class="tag">Two shots in.</span>
+        <span class="tag tag-2">One transition out.</span>
+      </h1>
+      <p class="lede">Seam makes a short video that travels from a first shot to a last one through an effect. Images, clips or 3D models in; open-weights LTX-2.5 on your own GPU; every take is a ComfyUI workflow you can open.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#run">Run it locally</a>
+        <a class="btn btn-outline" href="https://github.com/jdnichollsc/seam">Read the code</a>
+      </div>
+
+      <div class="graph" id="graph">
+        <div class="node n-a" data-sock="a-out">
+          <div class="node-head"><span class="chip s-image">First shot</span><span class="node-meta">image</span></div>
+          <img id="g-a" src="media/site/p2_a.jpg" alt="First shot: a white sneaker on wet concrete" />
+        </div>
+        <div class="node n-b" data-sock="b-out">
+          <div class="node-head"><span class="chip s-image">Last shot</span><span class="node-meta">image</span></div>
+          <img id="g-b" src="media/site/p2_b.jpg" alt="Last shot: a ceramic cup on a mossy rock" />
+        </div>
+        <div class="node n-fx" data-sock="fx">
+          <div class="node-head"><span class="chip s-effect">Effect</span><span class="node-meta">LTX-2.5</span></div>
+          <ol class="fx-list" id="fx-list">
+            <li data-fx="whip_pan" class="on">Whip Pan</li>
+            <li data-fx="smoke">Smoke</li>
+            <li data-fx="water_bend">Water Bend</li>
+          </ol>
+        </div>
+        <div class="node n-out" data-sock="out">
+          <div class="node-head"><span class="chip s-video">Output</span><span class="node-meta" id="g-meta">5 s · 1280×720 · rendered on an RTX 5090</span></div>
+          <div class="out-stage">
+            <video id="g-out" src="media/site/p2_whip_pan.mp4" poster="media/site/p2_whip_pan.jpg" muted playsinline autoplay preload="auto"></video>
+          </div>
+        </div>
+        <svg class="wires" id="wires" aria-hidden="true"></svg>
+      </div>
+      <p class="caption">Real takes, seed 1, no retouching. The input stills are fictional, made for testing.</p>
+    </section>
+
+    <section class="band" id="inputs" aria-labelledby="inputs-title">
+      <h2 id="inputs-title">Three ways in</h2>
+      <p class="section-lede">Each shot takes whatever you have. Everything becomes the frame the transition starts from or lands on.</p>
+      <ol class="inputs">
+        <li>
+          <svg class="icon-lg" viewBox="0 0 48 48" aria-hidden="true"><rect x="7" y="9" width="34" height="30" rx="4" /><circle cx="18" cy="20" r="4" /><path d="m9 35 10-10 7 7 5-5 8 8" /></svg>
+          <h3>An image</h3>
+          <p>PNG, JPEG or WebP. Seam reads what is in it with a small local model and writes that into the prompt; you can correct the line.</p>
+        </li>
+        <li>
+          <svg class="icon-lg" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="11" width="38" height="26" rx="4" /><path d="M21 19v10l8-5z" /><path d="M5 17h38M5 31h38" /></svg>
+          <h3>A 1–6 s clip</h3>
+          <p>The transition leaves from the first clip's last frame and lands on the second clip's first frame, then Seam joins clip, transition and clip into one video.</p>
+        </li>
+        <li>
+          <svg class="icon-lg" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 5 41 14.5v19L24 43 7 33.5v-19z" /><path d="M7 14.5 24 24l17-9.5M24 24v19" /><path class="orbit" d="M4 30c4 7 34 7 40 0" /></svg>
+          <h3>A 3D model (.glb)</h3>
+          <p>Frame it in the browser and record a 3 s camera orbit: the orbit becomes the clip. Or keep one angle as a still. The model never leaves your machine.</p>
+        </li>
+      </ol>
+      <figure class="showcase">
+        <video src="media/site/egg_dino.mp4" poster="media/site/egg_dino.jpg" muted loop playsinline preload="none"></video>
+        <figcaption><span class="chip s-video">3D → Smoke → 3D</span><span>An egg orbit and a brachiosaurus orbit, both from .glb models, joined by one real take.</span></figcaption>
+      </figure>
+    </section>
+
+    <section class="band" id="effects" aria-labelledby="effects-title">
+      <h2 id="effects-title">Only effects that pass ship</h2>
+      <p class="section-lede">Each effect is our own prompt, routed to the model that renders it best and played on two image pairs, two seeds, then on unseen pairs. Pick one, or let Seam surprise you.</p>
+      <div class="reel">
+        <figure class="take" data-fx="smoke">
+          <video src="media/site/p1_smoke.mp4" poster="media/site/p1_smoke_mid.jpg" muted loop playsinline preload="none"></video>
+          <figcaption><span class="chip s-video">Smoke</span><span>41 s median render</span></figcaption>
+        </figure>
+        <figure class="take" data-fx="water_bend">
+          <video src="media/site/p1_water_bend.mp4" poster="media/site/p1_water_bend_mid.jpg" muted loop playsinline preload="none"></video>
+          <figcaption><span class="chip s-video">Water Bend</span><span>40 s median render</span></figcaption>
+        </figure>
+        <figure class="take" data-fx="whip_pan">
+          <video src="media/site/p1_whip_pan.mp4" poster="media/site/p1_whip_pan_mid.jpg" muted loop playsinline preload="none"></video>
+          <figcaption><span class="chip s-video">Whip Pan</span><span>41 s median render</span></figcaption>
+        </figure>
+      </div>
+      <p class="caption">Render time from submit to finished 5 s video on one RTX 5090, including the prompt enhancer and model loading.</p>
+    </section>
+
+    <section class="band open" id="open" aria-labelledby="open-title">
+      <h2 id="open-title">Open by default</h2>
+      <dl class="facts">
+        <div>
+          <dt>Open weights</dt>
+          <dd>LTX-2.5 first/last-frame video with its in-graph prompt enhancer, and Gemma-4 E2B to read the shots. No partner nodes, no closed APIs, no credits.</dd>
+        </div>
+        <div>
+          <dt>Every take is a workflow</dt>
+          <dd>Seam archives the exact graph it submitted. "Open in ComfyUI" downloads it with both shots; the receipt says how the take was made.</dd>
+        </div>
+        <div>
+          <dt>Comfy Developer Platform</dt>
+          <dd>Every render goes through the official Comfy SDK to the Comfy API v2: served locally by comfy-api-proxy in front of your ComfyUI. The same client can point at Comfy Cloud, which we have not tested yet.</dd>
+        </div>
+        <div>
+          <dt>Agents included</dt>
+          <dd>A skill and an MCP server let Claude Code or any MCP agent plan, render, review and refine transitions, packaged as a Claude Code plugin and an Agent Plugins plugin.</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section class="band" id="run" aria-labelledby="run-title">
+      <h2 id="run-title">Run it</h2>
+      <p class="section-lede">A 32 GB NVIDIA GPU, 64 GB RAM and ComfyUI. The full guide, written so an agent can follow it too, is <a href="https://github.com/jdnichollsc/seam/blob/master/install.md">install.md</a>.</p>
+      <ol class="steps">
+        <li><span class="step-name">Get the models (~44 GB, open weights)</span><pre><code>git clone https://github.com/jdnichollsc/seam &amp;&amp; cd seam
+uv run python scripts/download_models.py --models-dir "&lt;ComfyUI&gt;/models" --only l25</code></pre></li>
+        <li><span class="step-name">Start the Comfy API proxy in front of ComfyUI</span><pre><code>uv tool install comfy-api-proxy==0.1.6
+comfy-api-proxy start --comfyui http://127.0.0.1:8188</code></pre></li>
+        <li><span class="step-name">Check, then open the studio</span><pre><code>uv run seam doctor
+uv run seam serve        # http://127.0.0.1:7860</code></pre></li>
+      </ol>
+      <p class="caption">Prefer the terminal? <code>seam make first.png last.png --preset smoke</code>. Prefer an agent? Install the plugin and ask for a transition.</p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p><span class="tag tag-sm">Seam</span> MIT licensed. Built for Comfy's <a href="https://comfy.org/open-source-higgsfield">Open Source Higgsfield</a> challenge. #OpenSourceHiggsfield</p>
+    <p class="foot-links"><a href="https://github.com/jdnichollsc/seam">GitHub</a> · <a href="https://github.com/jdnichollsc/seam/blob/master/install.md">Install</a> · <a href="https://x.com/jdnichollsc">@jdnichollsc</a></p>
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+  <script src="site.js"></script>
+</body>
+</html>

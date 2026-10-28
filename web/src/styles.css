@@ -356,3 +356,35 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .scrub::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--yellow); }
 .scrub::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -4px; border-radius: 50%; background: var(--yellow); border: 0; }
 .scrub::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--yellow); border: 0; }
+
+/* Try an example: three shipped pairs, one click fills both shots and the effect */
+.examples { display: grid; gap: 6px; padding: 0 10px 12px; }
+.examples-label { font-size: 12px; color: var(--dim); }
+.examples-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.example {
+  display: grid; gap: 5px; padding: 5px; border: 0; border-radius: 10px; background: var(--ink-raise); text-align: left;
+  box-shadow: inset 0 0 0 1px var(--line); transition: background 0.2s, box-shadow 0.2s;
+}
+.example:hover { background: var(--ink-hover); box-shadow: inset 0 0 0 1px var(--yellow); }
+.example-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; aspect-ratio: 16 / 10; border-radius: 6px; overflow: hidden; }
+.example-pair img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.example-name { font-size: 12px; line-height: 1.25; color: var(--muted); }
+.example:hover .example-name { color: var(--text); }
+
+/* 3D model studio: a .glb becomes an orbit clip or a still */
+.glb {
+  width: min(960px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line-strong); border-radius: var(--r-node);
+  background: var(--ink-deep); color: var(--text);
+}
+.glb::backdrop { background: rgba(14, 10, 17, 0.72); backdrop-filter: blur(4px); }
+.glb-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.glb-file { flex: 1; color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.glb-stage { position: relative; margin: 0 10px; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: var(--ink-raise); cursor: grab; }
+.glb-stage canvas { width: 100% !important; height: 100% !important; display: block; }
+.glb-status {
+  position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--display); font-stretch: 72%;
+  font-weight: 800; text-transform: uppercase; font-size: 20px; color: var(--yellow); background: rgba(25, 19, 30, 0.4);
+}
+.glb .error { padding: 8px 12px 0; }
+.glb-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; }
+.glb-hint { flex: 1 1 260px; margin: 0; color: var(--dim); font-size: 13px; }

@@ -113,3 +113,14 @@ def test_restart_mid_submit_is_reported_as_unknown_not_resubmitted(tmp_path: Pat
     assert e.store.get(sending.id).error == SUBMIT_UNKNOWN
     assert e.store.get(never.id).error == "server restarted before submission"
     assert e._queue.empty()
+
+
+def test_examples_load_as_ordinary_uploads(client) -> None:
+    c, e = client
+    listed = c.get("/api/examples").json()
+    assert {x["id"] for x in listed} == {"p1", "p2", "p6"}
+    assert c.get(listed[0]["a_url"]).status_code == 200
+    got = c.post("/api/examples/p2").json()
+    assert got["preset"] == "whip_pan" and got["a"]["id"] != got["b"]["id"]
+    assert (e.settings.uploads_dir / got["a"]["id"]).is_file()
+    assert c.post("/api/examples/nope").status_code == 404

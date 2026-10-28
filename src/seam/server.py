@@ -159,6 +159,36 @@ def presets() -> list[dict[str, Any]]:
     return out
 
 
+# Fictional, SFW test pairs (dev/fixtures) shipped with the app so a first run needs no images of your own.
+EXAMPLES = {
+    "p1": {"title": "Street to beach", "preset": "smoke"},
+    "p2": {"title": "Sneaker to cup", "preset": "whip_pan"},
+    "p6": {"title": "Perfume, marble to sea", "preset": "water_bend"},
+}
+EXAMPLES_DIR = PACKAGE_DIR / "static" / "examples"
+
+
+@app.get("/api/examples")
+def examples() -> list[dict[str, Any]]:
+    return [{"id": k, **v, "a_url": f"/examples/{k}_a.jpg", "b_url": f"/examples/{k}_b.jpg"}
+            for k, v in EXAMPLES.items() if (EXAMPLES_DIR / f"{k}_a.jpg").is_file()]
+
+
+@app.post("/api/examples/{example_id}")
+def use_example(example_id: str) -> dict[str, Any]:
+    """Both shots of an example as uploads, exactly as if the user had dropped them."""
+    if example_id not in EXAMPLES or not (EXAMPLES_DIR / f"{example_id}_a.jpg").is_file():
+        raise HTTPException(404, "unknown example")
+    from .media import image_size
+
+    out: dict[str, Any] = {"preset": EXAMPLES[example_id]["preset"]}
+    for side in ("a", "b"):
+        stored = store_upload(settings, EXAMPLES_DIR / f"{example_id}_{side}.jpg")
+        w, h = image_size(stored)
+        out[side] = {"id": stored.name, "url": f"/uploads/{stored.name}", "width": w, "height": h}
+    return out
+
+
 @app.post("/api/uploads")
 async def upload(file: UploadFile = File(...), role: str = "a") -> dict[str, Any]:
     """An image, or a short clip (role a: the transition starts from its last frame; role b: lands on its first)."""
@@ -340,6 +370,8 @@ app.mount("/uploads", StaticFiles(directory=settings.uploads_dir, check_dir=Fals
 _previews = PACKAGE_DIR / "static" / "previews"
 if _previews.exists():
     app.mount("/previews", StaticFiles(directory=_previews), name="previews")
+if EXAMPLES_DIR.exists():
+    app.mount("/examples", StaticFiles(directory=EXAMPLES_DIR), name="examples")
 _web = PACKAGE_DIR / "static" / "web"
 if _web.exists():
     app.mount("/", StaticFiles(directory=_web, html=True), name="web")

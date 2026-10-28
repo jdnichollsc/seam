@@ -50,6 +50,9 @@ export type ShotFields = { a_desc?: string; b_desc?: string; a_ref?: string; b_r
 
 export type Health = { ok: boolean; model: string; comfy_base_url: string; presets: number }
 
+/** A shipped example pair: both shots and the effect it was qualified with. */
+export type Example = { id: string; title: string; preset: string; a_url: string; b_url: string }
+
 /** Typical render time on this machine (median of recent takes); null before the first one. */
 export type Estimate = { seconds: number | null; samples: number }
 
@@ -94,6 +97,8 @@ export const api = {
     }),
   cancel: (id: string) => call<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
   estimate: () => call<Estimate>('/api/estimate'),
+  examples: () => call<Example[]>('/api/examples'),
+  loadExample: (id: string) => call<{ a: Upload; b: Upload; preset: string }>(`/api/examples/${id}`, { method: 'POST' }),
 }
 
 /** How a take was made (JSON) and the same take as a ComfyUI workflow bundle (zip). */

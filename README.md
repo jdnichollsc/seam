@@ -1,18 +1,34 @@
 # Seam
 
-**Two shots in, one transition out.** Seam makes a short video that travels from a first image to a last one
+**Two shots in, one transition out.** Seam makes a short video that travels from a first shot to a last one
 through an effect — smoke, a water bend, a whip pan — rendered on your own GPU with open-weights models.
 No accounts, no credits.
 
 It is an open-source take on the popular "transitions" apps, built for the
 [Open Source Higgsfield](https://comfy.org/open-source-higgsfield) challenge on the Comfy Developer Platform.
 
-- **Web app**: drop two images or two short clips, pick an effect (or "Surprise me"), watch it render, download,
-  make another take, or open the take in ComfyUI.
+- **Web app**: each shot can be an image, a 1–6 s clip or a **3D model (.glb)**. Pick an effect (or "Surprise me"),
+  watch it render, download, make another take, or open the take in ComfyUI. No images at hand? **Try an example**.
 - **CLI**: `seam make first.png last.png --preset smoke`.
 - **Agent plugin**: the Seam skill + MCP server so an agent can plan, render, review and refine transitions for you —
   packaged as a Claude Code plugin (`.claude-plugin/`) and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin
   (`plugin.json` + `mcp.json` + `skills/`) for other compatible agents.
+
+**Site:** https://jdnichollsc.github.io/seam/ · **Demo video (2 min):** _link added at submission_
+
+## Hackathon submission
+
+| | |
+|---|---|
+| Category fit | **Open Weights Only**: every render is LTX-2.5 (+ Gemma-4 E2B to read the shots) on your own GPU through core ComfyUI nodes; no partner nodes, no closed APIs. **VFX Workflow built with LTX**: LTX-2.5 first/last-frame is the core model of every effect. |
+| Comfy Developer Platform | Every render goes through the official **Comfy SDK** to the **Comfy API v2** (`comfy-api-proxy` locally). |
+| Workflow files | [`src/seam/workflows/`](src/seam/workflows) (API format, slot-mapped), and any take exports its exact graph via **Open in ComfyUI**. |
+| Run it locally | [install.md](install.md), checked end to end by `uv run seam doctor`. |
+| Try it | The app ships three example pairs: open the studio and pick one. No hosted endpoint: Seam runs on your GPU. |
+
+**3D models in.** Drop a `.glb` on either shot: Seam opens it in a small 3D studio in the browser (three.js), you
+frame it and record a 3 s camera orbit. The orbit becomes a clip, so the transition leaves from where the first
+orbit ends and lands where the second begins. Or keep one angle as a still. The model never leaves your machine.
 
 ## The three effects
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import {
@@ -11,10 +11,15 @@ import {
   type Job,
   type Preset,
   type ShotFields,
+  type Example,
   type Upload,
 } from './api'
 
 gsap.registerPlugin(useGSAP)
+
+// three.js loads only when someone drops a 3D model.
+const GlbStudio = lazy(() => import('./GlbStudio'))
+const isModel = (f: File) => /\.glb$/i.test(f.name) || f.type === 'model/gltf-binary'
 
 const MODEL_LABEL: Record<string, string> = { l25: 'LTX-2.5', l23: 'LTX-2.3', h3: 'MiniMax H3' }
 const ACTIVE = new Set(['queued', 'running'])
@@ -312,13 +317,13 @@ function Slot({ label, side, value, busy, onFile, onClear }: SlotProps) {
         <button className="slot-empty" onClick={() => input.current?.click()} disabled={busy}>
           <Icon name="upload" />
           <span className="slot-title">{busy ? 'Uploading…' : label}</span>
-          <span className="slot-hint">Drop, paste or choose an image or a 1–6 s clip</span>
+          <span className="slot-hint">Drop an image, a 1–6 s clip or a 3D model (.glb)</span>
         </button>
       )}
       <input
         ref={input}
         type="file"
-        accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
+        accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.glb,model/gltf-binary"
         className="visually-hidden"
         tabIndex={-1}
         aria-label={`Choose ${label.toLowerCase()}`}
@@ -515,6 +520,8 @@ export default function App() {
   const [notes, setNotes] = useState<{ a: Note | null; b: Note | null }>({ a: null, b: null })
   const jobs = useJobs()
   const [estimate, setEstimate] = useState<number | null>(null)
+  const [examples, setExamples] = useState<Example[]>([])
+  const [model, setModel] = useState<{ file: File; side: 'a' | 'b' } | null>(null)
   const root = useRef<HTMLDivElement>(null)
   const doneCount = jobs.filter((j) => j.status === 'succeeded').length
   useEffect(() => {
@@ -540,6 +547,7 @@ export default function App() {
   )
 
   useEffect(() => {
+    api.examples().then(setExamples).catch(() => {})
     api.health().then(setHealth).catch((e) => setHealthError(String(e.message ?? e)))
     api.presets()
       .then((ps) => {
@@ -561,6 +569,10 @@ export default function App() {
 
   const upload = useCallback(async (which: 'a' | 'b', file: File) => {
     setError(null)
+    if (isModel(file)) {
+      setModel({ file, side: which })  // the 3D studio turns it into an orbit clip or a still, then uploads that
+      return
+    }
     setUploading(which)
     try {
       const up = await api.upload(file, which)
@@ -635,6 +647,21 @@ export default function App() {
     }
   }
 
+  const tryExample = async (ex: Example) => {
+    setError(null)
+    try {
+      const got = await api.loadExample(ex.id)
+      setA(got.a)
+      setB(got.b)
+      if (presets.some((p) => p.id === got.preset)) setPreset(got.preset)
+      setFocusId(null)
+      read('a', got.a.id)
+      read('b', got.b.id)
+    } catch (e) {
+      setError(`That example could not be loaded: ${(e as Error).message}`)
+    }
+  }
+
   const reuse = (job: Job) => {
     const clip = (c?: string | null) => (c ? { clip: c, clip_url: uploadUrl(c) } : {})
     setA({ id: job.params.image_a, url: uploadUrl(job.params.image_a), width: 0, height: 0, ...clip(job.params.clip_a) })
@@ -704,6 +731,22 @@ export default function App() {
                 }}
               />
             </div>
+            {!a && !b && examples.length > 0 && (
+              <div className="examples">
+                <span className="examples-label">Or try an example</span>
+                <div className="examples-row">
+                  {examples.map((ex) => (
+                    <button key={ex.id} className="example" onClick={() => tryExample(ex)} title={`${ex.title} · ${presets.find((p) => p.id === ex.preset)?.name ?? ex.preset}`}>
+                      <span className="example-pair">
+                        <img src={ex.a_url} alt="" />
+                        <img src={ex.b_url} alt="" />
+                      </span>
+                      <span className="example-name">{ex.title}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {(notes.a || notes.b) && (
               <div className="notes">
                 <ShotNote label="first" note={notes.a} onEdit={(t) => notes.a && updateNote('a', notes.a.upload, (n) => ({ ...n, desc: t, edited: true }))} />
@@ -892,6 +935,17 @@ export default function App() {
         </main>
       </div>
       <Wires root={root} running={running} />
+      {model && (
+        <Suspense fallback={null}>
+          <GlbStudio
+            file={model.file}
+            side={model.side}
+            label={model.side === 'a' ? 'First shot' : 'Last shot'}
+            onShot={(f) => upload(model.side, f)}
+            onClose={() => setModel(null)}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }
