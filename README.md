@@ -18,12 +18,6 @@
 </p>
 
 <p align="center">
-  <img src="docs/media/readme/hero-3d.webp" width="760" alt="Seam take: a hatching-egg 3D model orbits, smoke rolls in, and a brachiosaurus 3D model orbits out — one real LTX-2.5 render between two camera orbits recorded from .glb files">
-  <br>
-  <sub>Two <code>.glb</code> models in: a 3 s orbit of each, joined by one real Smoke take (LTX-2.5, seed 1924763462, 46 s on an RTX 5090).</sub>
-</p>
-
-<p align="center">
   <a href="docs/media/seam-demo.mp4"><img src="docs/media/readme/demo-poster.jpg" width="640" alt="Watch the 2-minute demo"></a>
   <br>
   <b><a href="docs/media/seam-demo.mp4">▶ Watch the 2-minute demo</a></b> · <a href="https://jdnichollsc.github.io/seam/">Project site</a> · <a href="install.md">Install</a>
