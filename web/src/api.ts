@@ -4,6 +4,8 @@ export type Preset = {
   category: string
   camera: string
   model?: string
+  /** take lengths this effect is qualified at */
+  seconds?: number[]
   preview_url?: string
   poster_url?: string
 }
@@ -25,6 +27,7 @@ export type Job = {
     image_a: string
     image_b: string
     preset: string
+    seconds?: number
     seed: number
     model?: string
     prompt_extra?: string
@@ -82,7 +85,7 @@ export const api = {
   },
   describe: (uploadId: string) => call<ShotText>(`/api/describe/${uploadId}`, { method: 'POST' }),
   create: (
-    body: { image_a: string; image_b: string; preset: string; seed?: number; prompt_extra?: string; clip_a?: string; clip_b?: string } & ShotFields,
+    body: { image_a: string; image_b: string; preset: string; seconds?: number; seed?: number; prompt_extra?: string; clip_a?: string; clip_b?: string } & ShotFields,
   ) =>
     call<Job>('/api/transitions', {
       method: 'POST',
@@ -96,7 +99,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   cancel: (id: string) => call<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
-  estimate: () => call<Estimate>('/api/estimate'),
+  estimate: (seconds = 5) => call<Estimate>(`/api/estimate?seconds=${seconds}`),
   examples: () => call<Example[]>('/api/examples'),
   loadExample: (id: string) => call<{ a: Upload; b: Upload; preset: string }>(`/api/examples/${id}`, { method: 'POST' }),
 }

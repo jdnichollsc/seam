@@ -30,7 +30,7 @@ Seam is an open-source take on the "transitions" apps (Higgsfield, Kling, Pika),
 model runs on your machine and every take can be reopened, inspected and re-run in ComfyUI.
 
 - **Web studio**: shots on the left, the take on the right, your gallery below. Images, 1–6 s clips or **3D models**
-  as input, three qualified effects or **Surprise me**, and three examples so you can try it in one click.
+  as input, ten qualified effects (5 s takes, 10 s for Smoke, Water bend and Whip pan) or **Surprise me**, and three examples so you can try it in one click.
 - **CLI**: `seam make first.png last.png --preset smoke`.
 - **Agent plugin**: a skill + MCP server so Claude Code (or any MCP agent) can plan, render, review and refine
   transitions for you. Packaged as a Claude Code plugin and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin.
@@ -42,7 +42,7 @@ model runs on your machine and every take can be reopened, inspected and re-run 
 | **Generative, not a 2D blend** | Code tools (ffmpeg `xfade`, Remotion) cross-fade two flat frames. Seam asks a video model for what is *between* the shots: smoke that really hides the subject, water that reshapes into the next scene, a pan with real parallax and motion blur. |
 | **Any shot in, even 3D** | Images, clips, or a `.glb` you frame in the browser and record as a camera orbit. Everything becomes the frame the transition leaves from or lands on, so clips and orbits stay continuous. |
 | **Open by default** | Open weights (LTX-2.5, Gemma-4 E2B), core ComfyUI nodes, the official Comfy SDK. Each take archives the exact graph it submitted; **Open in ComfyUI** downloads it with both shots, and a receipt says how it was made. |
-| **Only qualified effects ship** | An effect is exposed only after it plays well on two image pairs × two seeds, then on unseen pairs. Three passed; more ship only if they pass too. |
+| **Only qualified effects ship** | An effect is exposed only after it plays well on two image pairs × two seeds, then on unseen pairs. Ten passed; more ship only if they pass too. Longer takes are qualified the same way, per effect. |
 | **Seam reads your shots** | A small local model describes each shot ("a cracked eggshell with jagged openings…") and that line goes into the prompt. You can correct it before you render. |
 | **Agents included** | The same server backs the web app, the CLI and an MCP server, so an agent can run the whole loop: plan, render, look at the take, refine. |
 
@@ -95,6 +95,8 @@ All real renders, seed 1, no retouching. The input stills are fictional and were
 | Smoke | 10 | 41 s (30–46 s) |
 | Water bend | 9 | 40 s (30–41 s) |
 | Whip pan | 9 | 41 s (30–56 s) |
+| Lava, Beast, Ink, Light burst, Zoom through, Melt, Wind vortex | 4 each | 38–43 s (35–47 s) |
+| Smoke, Water bend, Whip pan at **10 s** | 18 | 76 s (71–86 s) |
 
 Render time runs from submit to finished video, including LTX-2.5's prompt enhancer and any model loading (the
 slowest takes were the first after a load). Reading the two shots (~1 s each, cached) comes on top. Peak VRAM was
@@ -165,7 +167,7 @@ browser / CLI / agent (MCP)
   `comfy-api-proxy`. The same client can point at Comfy Cloud or a deployed endpoint through `COMFY_BASE_URL`
   (not tested yet).
 - Each effect is a preset (our own prompt text) routed to the model that renders it best: **LTX-2.5** first/last-frame
-  with its in-graph prompt enhancer (all three launch effects), or **LTX-2.3** with an open transition LoRA.
+  with its in-graph prompt enhancer (every launch effect), or **LTX-2.3** with an open transition LoRA.
 - Seam reads both shots first with the same small local model as the enhancer (Gemma-4 E2B), so the prompt says
   what is in them. You can correct that line before rendering.
 - Workflows are the official ComfyUI templates exported to API format; Seam only touches them through a named
@@ -202,7 +204,7 @@ browser / CLI / agent (MCP)
 
 Seam's code is MIT ([LICENSE](LICENSE)). The models keep their own licenses; read them before commercial use.
 The effect presets are our own text, inspired by common transition concepts — no third-party prompts or media.
-The 3D models in the demo are the author's own assets.
+The 3D models (`.glb`) in the demo are the author's own assets, released under MIT.
 
 **Status:** tested on Windows 11 with one RTX 5090. Linux, macOS and smaller GPUs are untested.
 

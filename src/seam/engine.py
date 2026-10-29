@@ -25,7 +25,7 @@ from .workflows import WorkflowSpec, build, load_spec
 
 SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may still have rendered there "
                   "(check ComfyUI's queue/output). Use New take to render it again.")
-SECONDS_CHOICES = (5,)  # 8 s ships only after it passes the P0 gate
+SECONDS_CHOICES = (5, 8, 10)  # what the graphs render; each launch effect lists the lengths it is qualified at
 PUBLIC_MODELS = ("l25", "l23")  # LTX family only: other models were research-only and never ship
 
 
@@ -113,6 +113,9 @@ class Engine:
             raise ValueError(f"effect {req.preset!r} is qualified on model {preset.model!r} only")
         if req.seconds not in SECONDS_CHOICES:
             raise ValueError(f"seconds must be one of {SECONDS_CHOICES}")
+        if preset.status == "launch" and req.seconds not in preset.seconds:
+            # each length is qualified on its own: a longer take paces the effect differently
+            raise ValueError(f"effect {req.preset!r} is qualified at {', '.join(map(str, preset.seconds))} s only")
         for p in (req.image_a, req.image_b, req.clip_a, req.clip_b):
             if p and not Path(p).is_file():
                 raise ValueError(f"file not found: {Path(p).name}")
@@ -133,6 +136,10 @@ class Engine:
         params = {**base.params, **{k: v for k, v in changes.items() if v is not None}}
         if changes.get("preset") and not changes.get("model"):
             params["model"] = None  # a new preset brings its own preferred model
+        new = self.presets.get(params["preset"])
+        if changes.get("preset") and changes.get("seconds") is None and new and new.status == "launch" \
+                and params.get("seconds", 5) not in new.seconds:
+            params["seconds"] = new.seconds[0]  # the new effect is not qualified at the old length
         if changes.get("seed") is None:
             params["seed"] = None  # a refinement is a new take unless the caller pins the seed
         for side in ("a", "b"):  # a corrected description drops the old label, which may contradict it
@@ -156,7 +163,8 @@ class Engine:
             return req.prompt_override.strip()
         return render_prompt(self.model_for(req), self.presets[req.preset],
                              a_ref=req.a_ref or "the first scene", b_ref=req.b_ref or "the second scene",
-                             a_desc=req.a_desc or None, b_desc=req.b_desc or None, extra=req.prompt_extra)
+                             a_desc=req.a_desc or None, b_desc=req.b_desc or None, extra=req.prompt_extra,
+                             seconds=req.seconds)
 
     def describe(self, image: Path) -> ShotText | None:
         """Description + label for one shot, cached per upload (uploads are content-addressed)."""

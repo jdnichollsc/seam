@@ -23,7 +23,7 @@ server = MCPServer(
         "(smoke, water bend, whip pan, ...), rendered locally on ComfyUI with open-weights models. "
         "Typical flow: list_presets → create_transition(local image paths, preset) → wait_job → "
         "preview_job to look at the result → refine_job to change preset/prompt/seed. Jobs run one at a "
-        "time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the first run). Always show the user the preview."
+        "time; a 5 s take renders in about 40 s on an RTX 5090, a 10 s one in about 80 s (longer on the first run). Always show the user the preview."
     ),
 )
 
@@ -57,6 +57,7 @@ def _brief(job: dict[str, Any]) -> dict[str, Any]:
     out = {k: job.get(k) for k in keys if job.get(k) is not None}
     out["preset"] = job.get("params", {}).get("preset")
     out["seed"] = job.get("params", {}).get("seed")
+    out["seconds"] = job.get("params", {}).get("seconds", 5)
     for k in ("a_desc", "b_desc"):  # what the prompt said about each shot (Seam's own reading unless you passed one)
         if job.get("params", {}).get(k):
             out[k] = job["params"][k]
@@ -75,26 +76,27 @@ async def seam_status() -> dict[str, Any]:
 
 @server.tool()
 async def list_presets() -> list[dict[str, Any]]:
-    """List transition presets (id, name, category, camera). Use the id in create_transition."""
+    """List transition presets (id, name, category, camera, seconds = the take lengths each one offers). Use the id in create_transition."""
     return await _req("GET", "/api/presets")
 
 
 @server.tool()
-async def create_transition(image_a: str, image_b: str, preset: str, seed: int | None = None,
+async def create_transition(image_a: str, image_b: str, preset: str, seconds: int = 5, seed: int | None = None,
                             prompt_extra: str = "", a_desc: str | None = None, b_desc: str | None = None,
                             a_ref: str | None = None, b_ref: str | None = None) -> dict[str, Any]:
     """Queue a transition video from image A (first frame) to image B (last frame).
 
     image_a / image_b: local file paths to images, or to short clips (1-6 s .mp4/.mov/.webm): with a clip, the
     transition starts from the last frame of clip A / lands on the first frame of clip B, and the job also gets a
-    merged video (clip A + transition + clip B, `merged_url`). preset: an id from list_presets. prompt_extra: extra direction appended
+    merged video (clip A + transition + clip B, `merged_url`). preset: an id from list_presets. seconds: take length,
+    one of the preset's `seconds` from list_presets (default 5). prompt_extra: extra direction appended
     to the preset. Seam reads both shots itself (local model) to describe them in the prompt; pass a_desc / b_desc
     only to correct that reading — a noun phrase like "a young woman with a calm smile in a red jacket on a rainy
     street at night" — and a_ref / b_ref as short labels like "the woman in the red jacket". "" means describe
     nothing. Returns the job (with the descriptions used once it starts); follow with wait_job.
     """
     a, b = await asyncio.gather(_upload(image_a, "a"), _upload(image_b, "b"))
-    body = {"image_a": a["id"], "image_b": b["id"], "clip_a": a.get("clip"), "clip_b": b.get("clip"), "preset": preset, "seed": seed, "prompt_extra": prompt_extra,
+    body = {"image_a": a["id"], "image_b": b["id"], "clip_a": a.get("clip"), "clip_b": b.get("clip"), "preset": preset, "seconds": seconds, "seed": seed, "prompt_extra": prompt_extra,
             "a_desc": a_desc, "b_desc": b_desc, "a_ref": a_ref, "b_ref": b_ref}
     return _brief(await _req("POST", "/api/transitions", json=body))
 
@@ -139,14 +141,14 @@ async def preview_job(job_id: str) -> Image:
 
 
 @server.tool()
-async def refine_job(job_id: str, preset: str | None = None, prompt_extra: str | None = None,
+async def refine_job(job_id: str, preset: str | None = None, seconds: int | None = None, prompt_extra: str | None = None,
                      seed: int | None = None, a_desc: str | None = None, b_desc: str | None = None,
                      a_ref: str | None = None, b_ref: str | None = None) -> dict[str, Any]:
-    """Re-run a previous job with changes (new preset, extra direction, descriptions, or a pinned seed).
+    """Re-run a previous job with changes (new preset or length, extra direction, descriptions, or a pinned seed).
 
     Unchanged fields are inherited; without `seed` a fresh take is rolled. The new job links to its parent.
     """
-    body = {"preset": preset, "prompt_extra": prompt_extra, "seed": seed, "a_desc": a_desc, "b_desc": b_desc,
+    body = {"preset": preset, "seconds": seconds, "prompt_extra": prompt_extra, "seed": seed, "a_desc": a_desc, "b_desc": b_desc,
             "a_ref": a_ref, "b_ref": b_ref}
     return _brief(await _req("POST", f"/api/jobs/{job_id}/refine", json=body))
 

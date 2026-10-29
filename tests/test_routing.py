@@ -73,3 +73,17 @@ def test_launch_presets_are_locked_to_their_qualified_model(engine: Engine, imag
     engine.settings = replace(engine.settings, model="l23")  # a different default must not reroute a launch effect
     assert engine.model_for(TransitionRequest(a, b, "water_bend")) == "l25"
     engine.validate(TransitionRequest(a, b, "whip_pan"))
+
+
+def test_launch_presets_offer_only_their_qualified_lengths(engine: Engine, images) -> None:
+    a, b = images
+    engine.presets["smoke"] = replace(engine.presets["smoke"], seconds=(5, 10))
+    engine.presets["whip_pan"] = replace(engine.presets["whip_pan"], seconds=(5,))
+    engine.validate(TransitionRequest(a, b, "smoke", seconds=10))
+    with pytest.raises(ValueError, match="qualified at 5 s only"):
+        engine.validate(TransitionRequest(a, b, "whip_pan", seconds=10))
+    with pytest.raises(ValueError, match="seconds must be one of"):
+        engine.validate(TransitionRequest(a, b, "smoke", seconds=7))
+    job = engine.submit(TransitionRequest(a, b, "smoke", seconds=10))
+    assert engine.refine(job.id, {"preset": "whip_pan"}).params["seconds"] == 5  # falls back to a qualified length
+    assert engine.refine(job.id, {"prompt_extra": "slower"}).params["seconds"] == 10

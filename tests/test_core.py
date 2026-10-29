@@ -46,6 +46,15 @@ def test_presets_load_and_render_for_core_model() -> None:
         prompt = render_prompt("l25", p, a_desc="a red door", b_desc="a blue sea", extra="slow")
         assert prompt.startswith("Use the provided start image as the first frame")
         assert "a red door" in prompt and "a blue sea" in prompt and "{" not in prompt
+        assert "seconds" not in prompt
+
+
+def test_long_takes_hold_the_effect_mid_clip() -> None:
+    p = next(iter(load_presets(PRESETS).values()))
+    prompt = render_prompt("l25", p, a_desc="a red door", seconds=10)
+    assert "The video opens on a red door. For the first 3.5 seconds" in prompt
+    assert "between 3.5 and 6.5 seconds" in prompt
+    assert "between 2.5 and 5.5 seconds" in render_prompt("l25", p, seconds=8)
 
 
 def test_job_store_lifecycle_and_lineage(tmp_path: Path) -> None:

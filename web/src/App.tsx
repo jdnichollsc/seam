@@ -514,6 +514,7 @@ export default function App() {
   const [uploading, setUploading] = useState<'a' | 'b' | null>(null)
   const [extra, setExtra] = useState('')
   const [seed, setSeed] = useState('')
+  const [seconds, setSeconds] = useState(5)
   const [error, setError] = useState<string | null>(null)
   const [focusId, setFocusId] = useState<string | null>(null)
   const [showFull, setShowFull] = useState(true)
@@ -525,8 +526,8 @@ export default function App() {
   const root = useRef<HTMLDivElement>(null)
   const doneCount = jobs.filter((j) => j.status === 'succeeded').length
   useEffect(() => {
-    api.estimate().then((e) => setEstimate(e.seconds)).catch(() => {})
-  }, [doneCount])
+    api.estimate(seconds).then((e) => setEstimate(e.seconds)).catch(() => {})
+  }, [doneCount, seconds])
 
   const updateNote = useCallback((which: 'a' | 'b', upload: string, change: (n: Note) => Note) => {
     setNotes((prev) => {
@@ -566,6 +567,13 @@ export default function App() {
   const focusActive = !!focus && ACTIVE.has(focus.status)
   const focusDone = focus?.status === 'succeeded' && !!focus.output_url
   const effectLabel = preset === SURPRISE ? 'Surprise me' : (current?.name ?? 'Pick an effect')
+  const lengthsOf = (p?: Preset) => p?.seconds ?? [5]
+  // every length any effect offers; the picked effect (or, for Surprise me, at least one effect) must offer it
+  const lengths = useMemo(() => Array.from(new Set(presets.flatMap(lengthsOf))).sort((x, y) => x - y), [presets])
+  const offers = (s: number) => (preset === SURPRISE ? presets.some((p) => lengthsOf(p).includes(s)) : lengthsOf(current).includes(s))
+  useEffect(() => {
+    if (presets.length && !offers(seconds)) setSeconds(preset === SURPRISE ? 5 : lengthsOf(current)[0])
+  }, [preset, presets]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const upload = useCallback(async (which: 'a' | 'b', file: File) => {
     setError(null)
@@ -617,11 +625,13 @@ export default function App() {
     if (!a || !b) return
     setError(null)
     try {
-      const pick = preset === SURPRISE ? presets[Math.floor(Math.random() * presets.length)]?.id ?? '' : preset
+      const pool = presets.filter((p) => lengthsOf(p).includes(seconds))
+      const pick = preset === SURPRISE ? pool[Math.floor(Math.random() * pool.length)]?.id ?? '' : preset
       const job = await api.create({
         image_a: a.id,
         image_b: b.id,
         preset: pick,
+        seconds,
         clip_a: a.clip,
         clip_b: b.clip,
         prompt_extra: extra.trim(),
@@ -667,6 +677,7 @@ export default function App() {
     setA({ id: job.params.image_a, url: uploadUrl(job.params.image_a), width: 0, height: 0, ...clip(job.params.clip_a) })
     setB({ id: job.params.image_b, url: uploadUrl(job.params.image_b), width: 0, height: 0, ...clip(job.params.clip_b) })
     setPreset(job.params.preset)
+    setSeconds(job.params.seconds ?? 5)
     for (const side of ['a', 'b'] as const) {
       const upload = job.params[`image_${side}`]
       const desc = job.params[`${side}_desc`]
@@ -754,7 +765,7 @@ export default function App() {
               </div>
             )}
           </Node>
-          <Node wire="effect" title="Effect" socket="effect" meta={effectLabel} className="effects-node">
+          <Node wire="effect" title="Effect" socket="effect" meta={`${effectLabel} · ${seconds} s`} className="effects-node">
             {families.length > 2 && (
               <div className="seg" role="tablist" aria-label="Effect family">
                 {families.map((f) => (
@@ -797,6 +808,26 @@ export default function App() {
                 </button>
               ))}
             </div>
+            {lengths.length > 1 && (
+              <div className="length">
+                <span className="length-label">Length</span>
+                <div className="seg seg-sm" role="radiogroup" aria-label="Take length">
+                  {lengths.map((s) => (
+                    <button
+                      key={s}
+                      role="radio"
+                      aria-checked={seconds === s}
+                      aria-selected={seconds === s}
+                      disabled={!offers(s)}
+                      title={offers(s) ? undefined : `${effectLabel} is tuned for ${lengthsOf(current).join(' or ')} s takes`}
+                      onClick={() => setSeconds(s)}
+                    >
+                      {s} s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </Node>
           <Node wire="direction" title="Direction" socket="text" meta="Optional" className="direction">
             <details className="more">

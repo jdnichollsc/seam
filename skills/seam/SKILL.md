@@ -22,11 +22,15 @@ renders at a time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the fir
    correct or steer it: a noun phrase (`a_desc: "a young woman with a calm smile in a red leather jacket on a
    rainy neon street at night"`) and optionally a short label (`a_ref: "the woman in the red jacket"`).
 2. **Pick the effect with the user**, or suggest one that suits the change:
-   - change of place or outfit, same person → smoke, water bend, whip pan
-   - object → object, or the same product in a new place → smoke, whip pan
+   - change of place or outfit, same person → smoke, water bend, whip pan, light burst, ink, zoom through
+   - object → object, or the same product in a new place → smoke, whip pan, melt, lava
+   - a dramatic reveal → beast (the subject turns into a creature first), lava, wind vortex
    - how each one hides the change: **smoke** rolls over the frame and B is revealed as it clears (foreground
      occlusion); **water bend** turns the scene itself into water that reshapes into B; **whip pan** is a fast
      sideways camera move whose motion blur bridges the two places
+   - takes are 5 s; `list_presets` shows each effect's `seconds` — smoke, water bend and whip pan also render
+     10 s takes, where the scene plays ~3.5 s, the effect sits in the middle, and B settles. Pass `seconds` only
+     when the user wants a longer take
    - if the user asks for an effect list_presets does not return (fire, morph, …), say it is not available yet and
      offer the closest listed one
 3. `create_transition(image_a, image_b, preset)` with **local file paths** (plus `a_desc` / `b_desc` if you

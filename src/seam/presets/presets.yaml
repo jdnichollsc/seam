@@ -4,6 +4,7 @@
 version: 1
 # status: launch = qualified + exposed · candidate = pending qualification (dev only: SEAM_SHOW_CANDIDATES=1)
 #         deferred = post-launch · trial = alternative-model test in progress (research)
+# seconds: take lengths a launch preset is qualified at (default [5]); each length is judged on played clips
 presets:
   - id: morph
     name: Morph
@@ -13,13 +14,6 @@ presets:
     camera: static camera, gentle slow push-in
     sound: a soft airy shimmer that swells and settles
     model: l25          # public default (enhancer on)
-  - id: melt
-    name: Melt
-    status: candidate
-    category: elemental
-    path: "{a} softens and melts downward in thick glossy drips, the whole frame liquefying into a swirling pool of color that rises and solidifies into {b}."
-    camera: static camera
-    sound: viscous dripping and a low warm hum
   - id: smoke
     name: Smoke
     status: launch
@@ -28,13 +22,15 @@ presets:
     camera: slow push-in through the smoke
     sound: a deep whoosh of rolling smoke
     model: l25          # qualified on LTX-2.5 + enhancer; launch presets are locked to their model
+    seconds: [5, 10]    # 10 s holds the effect mid-take (timing sentence); 8 s failed a seed (round 10/28)
   - id: ink
     name: Ink Shadow
-    status: candidate
+    status: launch
     category: elemental
     path: "{a} dissolves into dense black ink that blooms and spirals through the air like ink in water, then gathers and reforms into {b}."
     camera: static camera
     sound: a muffled underwater swirl
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (round 10/28)
   - id: fire
     name: Fire
     status: deferred
@@ -59,18 +55,20 @@ presets:
     sound: wind and hissing sand
   - id: light_burst
     name: Light Burst
-    status: candidate
+    status: launch
     category: energy
     path: "A blinding flash of white light bursts from the center of {a}, rays and lens flares filling the frame, then fading to reveal {b}."
     camera: static camera
     sound: a bright rising whoosh and a shimmering chime
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (round 10/28)
   - id: zoom_through
     name: Zoom Through
-    status: candidate
+    status: launch
     category: camera
     path: "The camera rushes forward into {a}, diving through the frame with streaking motion blur, and emerges inside {b}."
     camera: fast dolly-in that slows down at the end
     sound: a rushing wind whoosh
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (round 10/28)
   - id: whip_pan
     name: Whip Pan
     status: launch
@@ -79,6 +77,7 @@ presets:
     camera: fast horizontal whip pan with motion blur, settling at the end
     sound: a sharp swish
     model: l25          # user pick after the bake-off
+    seconds: [5, 10]    # 10 s holds the effect mid-take (timing sentence); 8 s failed a seed (round 10/28)
   - id: hand_wipe
     name: Hand Wipe
     status: candidate
@@ -104,11 +103,12 @@ presets:
     sound: a thunder of beating wings and distant caws
   - id: air
     name: Wind Vortex
-    status: candidate
+    status: launch
     category: elemental
-    path: "A spiralling vortex of wind and swirling leaves wraps around {a}, the air visibly twisting and blurring everything; the vortex spins faster, then unwinds to leave {b}."
-    camera: slow orbit around the subject
+    path: "Begin on {a}. Wind enters from outside the frame, wrapping around the scene in a three-dimensional spiral of dense leaves and airborne dust. The vortex expands toward the lens until opaque swirling debris completely covers the entire frame. While coverage remains complete, the scene changes. The same vortex clears to reveal {b} already fully established. No transparent overlap, dissolve, or late cut."
+    camera: locked camera, fixed framing
     sound: a rising howling wind that drops to a calm breeze
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (retune air_v2, round 10/28)
   - id: water_bend
     name: Water Bend
     status: launch
@@ -117,13 +117,15 @@ presets:
     camera: static camera
     sound: rushing water and a soft splash
     model: l25          # qualified on LTX-2.5 + enhancer
+    seconds: [5, 10]    # 10 s holds the effect mid-take (timing sentence); 8 s failed a seed (round 10/28)
   - id: lava
     name: Lava
-    status: candidate
+    status: launch
     category: elemental
     path: "Glowing cracks spread across {a} as molten lava breaks through, the frame turning into flowing orange magma and sparks; the lava cools and darkens, revealing {b}."
     camera: static camera with a slight handheld sway
     sound: deep rumbling, hissing lava and crackling rock
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (round 10/28)
   - id: fpv
     name: FPV Fly-Through
     status: trial
@@ -175,11 +177,20 @@ presets:
     sound: a loud engine roar passing by
   - id: beast
     name: Beast
-    status: candidate
+    status: launch
     category: vfx
     path: "The subject of {a} hunches forward as dark fur and powerful muscles ripple over them in a primal transformation, a roar shaking the frame; the creature rears up and its form resolves into {b}."
     camera: slow push-in with a shake on the roar
     sound: a deep animal roar and rumbling
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (round 10/28)
+  - id: melt
+    name: Melt
+    status: launch
+    category: elemental
+    path: "{a} softens and melts downward in thick glossy drips, the whole frame liquefying into a swirling pool of color that rises and solidifies into {b}."
+    camera: static camera
+    sound: viscous dripping and a low warm hum
+    model: l25          # qualified on LTX-2.5 + enhancer, two seeds (round 10/28)
   - id: intermission
     name: Intermission Card
     status: deferred

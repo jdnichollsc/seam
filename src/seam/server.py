@@ -115,6 +115,7 @@ class TransitionIn(BaseModel):
 
 class RefineIn(BaseModel):
     preset: str | None = None
+    seconds: int | None = None
     seed: int | None = None
     prompt_extra: str | None = Field(default=None, max_length=600)
     prompt_override: str | None = Field(default=None, max_length=4000)
@@ -151,7 +152,7 @@ def presets() -> list[dict[str, Any]]:
     out = []
     for p in _engine().exposed_presets().values():
         item = {"id": p.id, "name": p.name, "category": p.category, "camera": p.camera,
-                "model": p.model or settings.model}
+                "model": p.model or settings.model, "seconds": list(p.seconds)}
         if (previews / f"{p.id}.mp4").exists():
             item["preview_url"] = f"/previews/{p.id}.mp4"
             item["poster_url"] = f"/previews/{p.id}.jpg"
@@ -321,9 +322,10 @@ def job_comfy_bundle(job_id: str) -> Response:
 
 
 @app.get("/api/estimate")
-def estimate() -> dict[str, Any]:
-    """Typical render time on this machine: median of the last succeeded takes (None until there is one)."""
-    times = [j.wall_s for j in _engine().store.list(limit=50) if j.status == "succeeded" and j.wall_s][:10]
+def estimate(seconds: int = 5) -> dict[str, Any]:
+    """Typical render time on this machine for a take of this length: median of the last succeeded ones."""
+    times = [j.wall_s for j in _engine().store.list(limit=100) if j.status == "succeeded" and j.wall_s
+             and j.params.get("seconds", 5) == seconds][:10]
     return {"seconds": round(statistics.median(times)) if times else None, "samples": len(times)}
 
 

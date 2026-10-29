@@ -178,6 +178,10 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 
 /* Effect node: moving previews, like the effect galleries people know */
 .effects-node .seg { margin: 0 10px 10px; }
+.effects-node .length { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 10px 10px 0; }
+.effects-node .length .seg { margin: 0; }
+.length-label { color: var(--dim); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.seg button:disabled { opacity: 0.35; cursor: not-allowed; }
 .effects { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; padding: 0 10px 10px; }
 .effect {
   position: relative; display: grid; grid-template-rows: auto auto; gap: 0 8px; grid-template-columns: 1fr auto; align-items: baseline;

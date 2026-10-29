@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "seam",
   "version": "0.1.0",
-  "description": "AI video transitions between two shots (smoke, water bend, whip pan) with open-weights LTX models on your own GPU via ComfyUI + the Comfy SDK: the Seam skill and MCP server.",
+  "description": "AI video transitions between two shots (smoke, water bend, whip pan, lava, ink, melt, …) with open-weights LTX models on your own GPU via ComfyUI + the Comfy SDK: the Seam skill and MCP server.",
   "author": { "name": "jdnichollsc" },
   "homepage": "https://github.com/jdnichollsc/seam",
   "repository": "https://github.com/jdnichollsc/seam",

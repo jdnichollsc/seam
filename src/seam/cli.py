@@ -20,6 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("image_b", type=Path)
     mk.add_argument("--preset", required=True, help="a preset id from `seam presets`")
     mk.add_argument("--seed", type=int)
+    mk.add_argument("--seconds", type=int, default=5, help="take length; `seam presets` lists each effect's lengths")
     mk.add_argument("--extra", default="", help="text appended to the preset prompt")
     mk.add_argument("-o", "--out", type=Path, default=Path("seam_transition.mp4"))
     sub.add_parser("mcp", help="run the MCP server (stdio) — talks to a running `seam serve`")
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         for p in load_presets(settings.presets_file).values():
             if p.status not in shown:
                 continue
-            print(f"{p.id:14} {p.name:16} {p.category}")
+            print(f"{p.id:14} {p.name:16} {p.category:12} {'/'.join(map(str, p.seconds))} s")
         return 0
 
     from .engine import Engine, TransitionRequest, store_upload
@@ -63,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
     engine.start()
     job = engine.submit(TransitionRequest(image_a=str(store_upload(settings, args.image_a)),
                                           image_b=str(store_upload(settings, args.image_b)),
-                                          preset=args.preset, seed=args.seed, prompt_extra=args.extra))
+                                          preset=args.preset, seconds=args.seconds, seed=args.seed,
+                                          prompt_extra=args.extra))
     print(f"job {job.id} queued (preset={args.preset})", flush=True)
     last = -1.0
     while True:
