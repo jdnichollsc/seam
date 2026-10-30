@@ -77,7 +77,9 @@ def _brief(job: dict[str, Any]) -> dict[str, Any]:
 
 @server.tool()
 async def seam_status() -> dict[str, Any]:
-    """Check that the Seam server and its ComfyUI backend are reachable; returns the active model."""
+    """Check that the Seam server is reachable; returns the active model and `backend`: "local" renders on this
+    machine, "cloud" uploads the shots to Comfy Cloud and spends the user's credits (tell them before rendering).
+    Only the user switches it, in the Seam app or with `seam backend`."""
     return await _req("GET", "/api/health")
 
 

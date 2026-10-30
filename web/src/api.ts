@@ -83,7 +83,7 @@ export type Job = {
   merged_url?: string
   poster_url?: string
   sheet_url?: string
-  extra: { width?: number; height?: number; duration?: number; prompt?: string; sequence_id?: string; segment?: number }
+  extra: { width?: number; height?: number; duration?: number; prompt?: string; sequence_id?: string; segment?: number; backend?: BackendName }
 }
 
 /** What Seam sees in a shot: a description and a short label, both used in the prompt. */
@@ -92,7 +92,15 @@ export type ShotText = { desc: string; ref: string }
 /** Omit a side to let the server read the shot itself; send '' for a generic prompt. */
 export type ShotFields = { a_desc?: string; b_desc?: string; a_ref?: string; b_ref?: string }
 
-export type Health = { ok: boolean; model: string; comfy_base_url: string; presets: number }
+export type Health = { ok: boolean; model: string; comfy_base_url: string; backend: BackendName; presets: number }
+export type BackendName = 'local' | 'cloud'
+/** Where takes render. The API key itself never comes back from the server. */
+export type BackendState = {
+  backend: BackendName
+  source: string
+  keys_url: string
+  cloud: { key_configured: boolean; key_source: string | null }
+}
 
 /** A shipped example pair: both shots and the effect it was qualified with. */
 export type Example = { id: string; title: string; preset: string; a_url: string; b_url: string }
@@ -117,6 +125,12 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => call<Health>('/api/health'),
+  backend: () => call<BackendState>('/api/backend'),
+  setBackend: (backend: BackendName) =>
+    call<BackendState>('/api/backend', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ backend }) }),
+  setCloudKey: (api_key: string) =>
+    call<BackendState>('/api/backend/key', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key }) }),
+  clearCloudKey: () => call<BackendState>('/api/backend/key', { method: 'DELETE' }),
   presets: () => call<Preset[]>('/api/presets'),
   jobs: () => call<Job[]>('/api/jobs?limit=60'),
   upload: (file: File, role: 'a' | 'b' | 'mid') => {
@@ -124,7 +138,7 @@ export const api = {
     body.append('file', file)
     return call<Upload>(`/api/uploads?role=${role}`, { method: 'POST', body })
   },
-  describe: (uploadId: string) => call<ShotText>(`/api/describe/${uploadId}`, { method: 'POST' }),
+  describe: (uploadId: string) => call<ShotText & { deferred?: boolean }>(`/api/describe/${uploadId}`, { method: 'POST' }),
   create: (
     body: { image_a: string; image_b: string; preset: string; seconds?: number; seed?: number; prompt_extra?: string; clip_a?: string; clip_b?: string } & ShotFields,
   ) =>

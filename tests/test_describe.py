@@ -74,7 +74,7 @@ def test_empty_shot_text_means_the_generic_prompt(engine: Engine, images) -> Non
 def test_worker_reads_only_the_shots_left_undescribed(engine: Engine, images, monkeypatch) -> None:
     a, b = images
     read: list[str] = []
-    monkeypatch.setattr(engine, "describe", lambda p: read.append(Path(p).name) or ShotText("a blue car", "the car"))
+    monkeypatch.setattr(engine, "describe", lambda p, backend=None: read.append(Path(p).name) or ShotText("a blue car", "the car"))
     job = engine.submit(TransitionRequest(a, b, "whip_pan", b_desc=""))  # B explicitly cleared by the user
     req = engine._fill_descriptions(job, TransitionRequest(**job.params))
     assert read == ["a.png"]
@@ -93,7 +93,7 @@ def test_refine_with_a_corrected_description_drops_the_old_label(engine: Engine,
 def test_a_failed_reading_falls_back_to_the_generic_prompt(engine: Engine, images, monkeypatch) -> None:
     a, b = images
 
-    def boom(_: Path) -> ShotText:
+    def boom(_: Path, backend: str | None = None) -> ShotText:
         raise RuntimeError("gpu busy")
 
     monkeypatch.setattr(engine, "describe", boom)

@@ -52,8 +52,14 @@ comfy-api-proxy start --comfyui http://127.0.0.1:8188     # serves http://127.0.
 curl http://127.0.0.1:8189/api/v2/health
 ```
 
-Using **Comfy Cloud** or a deployed Comfy API instead: skip this step and set `COMFY_BASE_URL` and
-`COMFY_API_KEY` (server-side only — never in the browser).
+Using **Comfy Cloud** instead (no GPU needed): skip ComfyUI, this step and the model downloads. Create an
+[API key](https://platform.comfy.org/profile/api-keys), start Seam, then pick Comfy Cloud in the chip at the top of the
+app, or run `seam backend --set-key` and `seam backend cloud`. Your shots are uploaded and takes use your credits. The key
+is saved in `~/.seam/cloud.json` in plain text (same trust as a `.env`; on Windows your user profile's permissions protect
+it) and never reaches the browser again. Comfy Cloud only works with Seam on localhost: without authentication, a server
+open to a network would let anyone spend your credits.
+
+A deployed Comfy API: set `COMFY_BASE_URL` and `COMFY_API_KEY` (server-side only).
 
 ## 4. ffmpeg
 
@@ -69,7 +75,7 @@ uv run seam doctor                        # must print "ready"
 uv run seam serve                         # http://127.0.0.1:7860
 ```
 
-Environment variables (all optional): `COMFY_BASE_URL` (default `http://127.0.0.1:8189`), `COMFY_API_KEY`,
+Environment variables (all optional): `SEAM_BACKEND` (`local` or `cloud`; overrides the app's choice), `COMFY_BASE_URL` (default `http://127.0.0.1:8189`), `COMFY_API_KEY`,
 `SEAM_COMFYUI_URL` (for `seam doctor`'s model check, default `http://127.0.0.1:8188`), `SEAM_PORT` (7860),
 `SEAM_DATA_DIR` (`~/.seam`: uploads, outputs, job database).
 

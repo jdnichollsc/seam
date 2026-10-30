@@ -71,6 +71,7 @@ def build_receipt(job: JobRecord, spec: WorkflowSpec, outputs_dir: Path) -> dict
         "render_seconds": job.wall_s,
         "effect": p.get("preset"),
         "model": spec.model,
+        "rendered_on": x.get("backend", "local"),
         "seed": p.get("seed"),
         "seconds": p.get("seconds"),
         "size": [x.get("width"), x.get("height")],

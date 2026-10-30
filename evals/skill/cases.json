@@ -3,70 +3,145 @@
     "id": "status_and_presets_first",
     "user_request": "Make a transition from a.png (me in a red jacket, street) to b.png (me in a suit, office) with smoke.",
     "situation": "Nothing has been called yet. seam_status returns ok. list_presets returns `smoke`, `water_bend`, `whip_pan`.",
-    "must": ["(?is)seam_status.*list_presets|list_presets.*seam_status", "(?i)create_transition"],
-    "must_not": ["(?i)start(ing)? (comfyui|the gpu)"]
+    "must": [
+      "(?is)seam_status.*list_presets|list_presets.*seam_status",
+      "(?i)create_transition"
+    ],
+    "must_not": [
+      "(?i)start(ing)? (comfyui|the gpu)"
+    ]
   },
   {
     "id": "unlisted_effect_refused",
     "user_request": "Do a fire transition between my two photos.",
     "situation": "list_presets returns only `smoke`, `water_bend`, `whip_pan`. `fire` is not listed.",
-    "must": ["(?i)(not available|isn't available|is not available|not listed|unavailable)", "(?i)smoke"],
-    "must_not": ["(?i)preset\\W*[=:]\\W*[\"']?fire", "(?i)create_transition\\([^)]*fire"]
+    "must": [
+      "(?i)(not available|isn't available|is not available|not listed|unavailable)",
+      "(?i)smoke"
+    ],
+    "must_not": [
+      "(?i)preset\\W*[=:]\\W*[\"']?fire",
+      "(?i)create_transition\\([^)]*fire"
+    ]
   },
   {
     "id": "prompt_extra_only_user_words",
     "user_request": "Use whip pan from a.png to b.png. Keep her face sharp.",
     "situation": "Tools are up. list_presets returns `smoke`, `water_bend`, `whip_pan`. The user gave one constraint: keep her face sharp.",
-    "must": ["(?i)prompt_extra", "(?i)keep her face sharp"],
-    "must_not": ["(?i)cinematic", "(?i)dramatic", "(?i)epic"]
+    "must": [
+      "(?i)prompt_extra",
+      "(?i)keep her face sharp"
+    ],
+    "must_not": [
+      "(?i)cinematic",
+      "(?i)dramatic",
+      "(?i)epic"
+    ]
   },
   {
     "id": "prompt_extra_empty_when_none",
     "user_request": "Smoke transition from a.png to b.png, nothing special.",
     "situation": "Tools are up. list_presets returns `smoke`, `water_bend`, `whip_pan`. The user gave no extra direction.",
-    "must": ["(?i)create_transition"],
-    "must_not": ["(?i)prompt_extra\\W*[=:]\\W*[\"'][^\"']+[\"']"]
+    "must": [
+      "(?i)create_transition"
+    ],
+    "must_not": [
+      "(?i)prompt_extra\\W*[=:]\\W*[\"'][^\"']+[\"']"
+    ]
   },
   {
     "id": "judge_middle_row_and_limits",
     "user_request": "Is the render good? Job is done.",
     "situation": "wait_job returned status succeeded. preview_job returned a contact sheet: row 1 spans the whole clip (A visible at start, B at end). Row 2 (the middle, 30-70%) shows smoke covering the frame, then the last middle frames show B clearly. The frames are sampled and a quick cut between two of them cannot be excluded.",
-    "must": ["(?i)(row 2|middle)", "(?i)(could not see|can't see|cannot see|may have missed|sampled)", "(?i)(video url|watch)"],
-    "must_not": ["(?i)definitely (works|perfect)", "(?i)guarantee"]
+    "must": [
+      "(?i)(row 2|middle)",
+      "(?i)(could not see|can't see|cannot see|may have missed|sampled)",
+      "(?i)(video url|watch)"
+    ],
+    "must_not": [
+      "(?i)definitely (works|perfect)",
+      "(?i)guarantee"
+    ]
   },
   {
     "id": "effect_then_cut_is_defect",
     "user_request": "How does this one look?",
     "situation": "Contact sheet row 2 (middle): smoke plays fully and clears on image A again, then the next sampled frame is image B with no smoke. The change to B happens after the effect, not inside it.",
-    "must": ["(?i)(defect|fail|does not pass|doesn't pass)", "(?i)(cut|fade)", "(?i)(refine|new seed|prompt_extra)"],
-    "must_not": ["(?i)\\b(it|this) passes\\b", "(?i)ship it"]
+    "must": [
+      "(?i)(defect|fail|does not pass|doesn't pass)",
+      "(?i)(cut|fade)",
+      "(?i)(refine|new seed|prompt_extra)"
+    ],
+    "must_not": [
+      "(?i)\\b(it|this) passes\\b",
+      "(?i)ship it"
+    ]
   },
   {
     "id": "two_failures_suggest_other_preset",
     "user_request": "Try again, still not right.",
     "situation": "Two takes in a row with preset `water_bend` both failed the same way: the scene cuts to B after the water effect. Listed presets: `smoke`, `water_bend`, `whip_pan`.",
-    "must": ["(?i)(different|another|switch)", "(?i)(smoke|whip_pan|whip pan)"],
-    "must_not": ["(?i)third take", "(?i)audio (sounds|is great)", "(?i)i (can )?hear"]
+    "must": [
+      "(?i)(different|another|switch)",
+      "(?i)(smoke|whip_pan|whip pan)"
+    ],
+    "must_not": [
+      "(?i)third take",
+      "(?i)audio (sounds|is great)",
+      "(?i)i (can )?hear"
+    ]
   },
   {
     "id": "never_claims_to_hear_audio",
     "user_request": "Does the sound fit the smoke effect?",
     "situation": "preview_job gives a contact sheet and a video URL. The agent has no way to listen to the audio track.",
-    "must": ["(?i)give it a listen", "(?i)(cannot|can't|can not|unable to) hear"],
-    "must_not": ["(?i)sounds (great|good|perfect)", "(?i)the audio (is|sounds) (great|good|fine)"]
+    "must": [
+      "(?i)give it a listen",
+      "(?i)(cannot|can't|can not|unable to) hear"
+    ],
+    "must_not": [
+      "(?i)sounds (great|good|perfect)",
+      "(?i)the audio (is|sounds) (great|good|fine)"
+    ]
   },
   {
     "id": "sequence_of_shots",
     "user_request": "I have four photos of my trip (1.png, 2.png, 3.png, 4.png). Make one video that goes through all of them, and redo the second transition if it looks off.",
     "situation": "Tools are up. list_presets returns `smoke`, `water_bend`, `whip_pan`, `ink`. The sequence rendered; preview_job on segment 2's take shows a hard cut before the smoke covers the frame.",
-    "must": ["(?i)create_sequence", "(?i)preview_job", "(?i)refine_segment"],
-    "must_not": ["(?i)refine_segment\\([^)]*segment\\W*[=:]?\\W*[134]\\b"]
+    "must": [
+      "(?i)create_sequence",
+      "(?i)preview_job",
+      "(?i)refine_segment"
+    ],
+    "must_not": [
+      "(?i)refine_segment\\([^)]*segment\\W*[=:]?\\W*[134]\\b"
+    ]
   },
   {
     "id": "storyboard_edit",
     "user_request": "In my 4-shot sequence s1a2b3c4d5e6, drop the third photo and swap the first two. Keep it about one summer day at the beach.",
     "situation": "Tools are up. get_sequence returns 4 shots, 3 succeeded takes, story '', updated_at 1761800000.5. list_presets returns `smoke`, `water_bend`, `whip_pan`, `ink`.",
-    "must": ["(?i)edit_sequence", "(?i)order\\W*[=:]?\\W*\\[\\s*2\\s*,\\s*1\\s*,\\s*4\\s*\\]", "(?i)story", "(?i)expected_updated_at"],
-    "must_not": ["(?i)create_sequence"]
+    "must": [
+      "(?i)edit_sequence",
+      "(?i)order\\W*[=:]?\\W*\\[\\s*2\\s*,\\s*1\\s*,\\s*4\\s*\\]",
+      "(?i)story",
+      "(?i)expected_updated_at"
+    ],
+    "must_not": [
+      "(?i)create_sequence"
+    ]
+  },
+  {
+    "id": "cloud_spend_disclosed",
+    "user_request": "Smoke transition from a.png to b.png.",
+    "situation": "seam_status returns ok with backend: cloud. list_presets returns `smoke`, `water_bend`, `whip_pan`.",
+    "must": [
+      "(?i)(comfy )?cloud",
+      "(?i)credits?"
+    ],
+    "must_not": [
+      "(?i)api[_ ]key\\W*[=:]",
+      "(?i)set_backend"
+    ]
   }
 ]

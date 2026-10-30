@@ -97,6 +97,29 @@ h2, .chip, .btn, .seg button, .filters button, .brand-tag, .slot-title, .effect-
 .engine.is-up::before { background: var(--ok); box-shadow: 0 0 0 3px rgba(139, 227, 161, 0.18); }
 .engine.is-down { color: var(--danger); }
 .engine.is-down::before { background: var(--danger); }
+button.engine { border: 0; font-family: inherit; cursor: pointer; }
+button.engine:hover:not(:disabled) { color: var(--yellow); }
+button.engine:disabled { cursor: default; }
+.backend { position: relative; }
+.backend-panel {
+  position: absolute; z-index: 40; top: calc(100% + 8px); right: 0; width: min(340px, calc(100vw - 32px)); padding: 16px;
+  display: grid; gap: 10px; border: 1px solid var(--line-strong); border-radius: 12px; background: #17171c;
+  color: var(--muted); font-size: 13px; line-height: 1.4;
+}
+.backend-title { color: #fff; font-weight: 600; }
+.backend-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); }
+.backend-choice button { height: 34px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.backend-choice button.is-on { background: var(--yellow); color: #111; font-weight: 600; }
+.backend-choice button:disabled:not(.is-on) { opacity: 0.45; cursor: not-allowed; }
+.backend-panel label { display: block; margin-bottom: 6px; color: #fff; }
+.backend-key { display: flex; gap: 8px; }
+.backend-key input {
+  flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3); color: #fff; font: inherit;
+}
+.backend-panel a, .backend-link { color: var(--yellow); }
+.backend-link { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; text-decoration: underline; }
+.backend-problem { color: var(--danger); }
 
 /* Studio: control rail | canvas ------------------------------------------------------------ */
 .studio { display: grid; grid-template-columns: minmax(360px, 420px) 1fr; align-items: start; }
@@ -438,13 +461,20 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
   .seq-take-media { width: 56px; }
   .seq-take-actions { grid-column: 1 / -1; justify-content: flex-end; }
 }
-
-/* Grow a story: the next shot after a finished take or sequence */
-.add-next { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px; margin: 0 10px 10px; border: 1.5px dashed var(--line-strong); border-radius: 10px; transition: border-color 0.2s; }
-.add-next.is-over { border-color: var(--sock-image); }
-.add-next .icon { width: 16px; height: 16px; }
-.add-next-note { color: var(--dim); font-size: 13px; }
-.canvas > .add-next { margin: 0 0 16px; }
+
+
+/* Grow a story: the next shot after a finished take or sequence */
+
+.add-next { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px; margin: 0 10px 10px; border: 1.5px dashed var(--line-strong); border-radius: 10px; transition: border-color 0.2s; }
+
+.add-next.is-over { border-color: var(--sock-image); }
+
+.add-next .icon { width: 16px; height: 16px; }
+
+.add-next-note { color: var(--dim); font-size: 13px; }
+
+.canvas > .add-next { margin: 0 0 16px; }
+
 
 /* Grow a story, step 2: where it leaves from, the effect into the new shot, the new shot */
 .add-next.is-off { opacity: 0.7; }

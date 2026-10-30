@@ -171,8 +171,8 @@ browser / CLI / agent (MCP)
 ```
 
 - Every generation goes through the official **Comfy SDK** against the **Comfy API v2**, served locally by
-  `comfy-api-proxy`. The same client can point at Comfy Cloud or a deployed endpoint through `COMFY_BASE_URL`
-  (not tested yet).
+  `comfy-api-proxy`. No GPU? `seam backend cloud` renders the same graphs on your Comfy Cloud account (see install.md). A deployed endpoint works through `COMFY_BASE_URL`
+  (neither has rendered a real take through Seam yet).
 - Each effect is a preset (our own prompt text) routed to the model that renders it best: **LTX-2.5** first/last-frame
   with its in-graph prompt enhancer (every launch effect), or **LTX-2.3** with an open transition LoRA.
 - Seam reads both shots first with the same small local model as the enhancer (Gemma-4 E2B), so the prompt says

@@ -3,12 +3,19 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from seam.config import Settings
 from seam.doctor import model_files, required_workflows
 from seam.presets import load_presets
 from seam.workflows import load_spec
 
 S = Settings(data_dir=Path("."))
+
+
+@pytest.fixture(autouse=True)
+def renders_locally(monkeypatch):
+    monkeypatch.setenv("SEAM_BACKEND", "local")  # not whatever this machine's Seam is set to
 
 
 def test_every_loader_instance_is_checked() -> None:

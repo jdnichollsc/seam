@@ -7,6 +7,7 @@ import os
 import shutil
 import urllib.request
 
+from . import backend as backends
 from .config import PACKAGE_DIR, get_settings
 from .presets import load_presets
 from .workflows import load_spec, missing_slots
@@ -39,9 +40,9 @@ def _choices(info: dict | None, node: str, field: str) -> list:
     return []
 
 
-def _get(url: str) -> dict | None:
+def _get(url: str, headers: dict[str, str] | None = None) -> dict | None:
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=10) as r:
             return json.loads(r.read() or b"{}")
     except Exception:
         return None
@@ -64,13 +65,64 @@ def run_doctor() -> int:
     except RuntimeError:
         check(False, "ffmpeg + ffprobe on PATH", "install ffmpeg (see install.md)")
 
-    check(_get(f"{s.comfy_base_url}/api/v2/health") is not None, f"Comfy API v2 reachable at {s.comfy_base_url}",
-          "start ComfyUI, then `comfy-api-proxy start` (or set COMFY_BASE_URL / COMFY_API_KEY for Comfy Cloud)")
-
-    comfyui = os.environ.get("SEAM_COMFYUI_URL", "http://127.0.0.1:8188")
+    backend = backends.current(s)[0]
+    print(f"  info rendering on {'Comfy Cloud' if backend == backends.CLOUD else 'this machine'}")
     from .engine import Engine
 
     presets = load_presets(s.presets_file)
+    if backend == backends.CLOUD:
+        _check_cloud(s, presets, check)
+    else:
+        check(_get(f"{s.comfy_base_url}/api/v2/health") is not None, f"Comfy API v2 reachable at {s.comfy_base_url}",
+              "start ComfyUI, then `comfy-api-proxy start` (or `seam backend cloud` for Comfy Cloud)")
+        _check_comfyui(s, presets, check)
+
+    needed = required_workflows(presets, s.model, Engine.exposed_statuses())
+    for model in sorted(needed):
+        check(not missing_slots(load_spec(s.workflows_dir, model)), f"{model}: workflow slot map matches the graph",
+              "reinstall the package")
+    launch = [p.id for p in presets.values() if p.status == "launch"]
+    check(len(launch) >= 3, f"{len(presets)} presets loaded, {len(launch)} qualified for launch (need 3+)", "reinstall")
+    check((PACKAGE_DIR / "static" / "web" / "index.html").exists(), "web app built",
+          "cd web && npm install && npm run build")
+    print("ready" if ok else "not ready - fix the items above")
+    return 0 if ok else 1
+
+
+def _check_cloud(s, presets, check) -> None:
+    """Key, then the graphs' nodes and model files, as far as Comfy Cloud lets an API key look."""
+    from .engine import Engine
+
+    key, _ = backends.cloud_key(s)
+    check(key is not None, "Comfy Cloud API key set", f"create one at {backends.KEYS_URL}, then `seam backend --set-key`")
+    if key is None:
+        return
+    try:
+        backends.verify_key(key)
+        check(True, "Comfy Cloud accepts the key")
+    except backends.InvalidKey as e:
+        check(False, "Comfy Cloud accepts the key", f"{e}: `seam backend --set-key`")
+        return
+    headers = {"X-API-Key": key}
+    needed = required_workflows(presets, s.model, Engine.exposed_statuses())
+    graphs = [load_spec(s.workflows_dir, m).graph() for m in sorted(needed)]
+    info: dict[str, dict | None] = {}
+    for cls in sorted({n["class_type"] for g in graphs for n in g.values()}):
+        info[cls] = _get(f"{backends.CLOUD_URL}/api/object_info/{cls}", headers)
+        if info[cls] is None:  # not a pass: we simply could not look
+            print("  info could not read Comfy Cloud's node list with an API key; nodes and models not checked")
+            return
+        check(cls in info[cls], f"Comfy Cloud has the node {cls}", "Comfy Cloud does not offer it yet; render locally")
+    for g in graphs:
+        for node, field, filename in model_files(g):
+            check(filename in _choices(info.get(node), node, field), f"Comfy Cloud has {filename}",
+                  "Comfy Cloud does not offer it yet; render locally")
+
+
+def _check_comfyui(s, presets, check) -> None:
+    from .engine import Engine
+
+    comfyui = os.environ.get("SEAM_COMFYUI_URL", "http://127.0.0.1:8188")
     needed = required_workflows(presets, s.model, Engine.exposed_statuses())
     workflows = sorted(json.loads((s.workflows_dir / "slots.json").read_text(encoding="utf-8")).keys() - {"_doc"})
     graphs = {m: load_spec(s.workflows_dir, m).graph() for m in workflows}
@@ -101,13 +153,3 @@ def run_doctor() -> int:
             if model not in needed:
                 print(f"  info {model}: optional - not used by the launch effects"
                       + (f" ({len(missing)} file(s) not installed)" if missing else " (installed)"))
-
-    for model in sorted(needed):
-        check(not missing_slots(load_spec(s.workflows_dir, model)), f"{model}: workflow slot map matches the graph",
-              "reinstall the package")
-    launch = [p.id for p in presets.values() if p.status == "launch"]
-    check(len(launch) >= 3, f"{len(presets)} presets loaded, {len(launch)} qualified for launch (need 3+)", "reinstall")
-    check((PACKAGE_DIR / "static" / "web" / "index.html").exists(), "web app built",
-          "cd web && npm install && npm run build")
-    print("ready" if ok else "not ready - fix the items above")
-    return 0 if ok else 1

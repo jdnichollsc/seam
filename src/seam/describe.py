@@ -56,7 +56,15 @@ def run(client: Comfy, spec: WorkflowSpec, image: Path, timeout_s: float = 180) 
     wf = client.workflows.from_file(spec.workflow_file)
     wf.set_input(*spec.slots["image"], client.assets.from_file(image))
     wf.set_input(*spec.slots["prompt"], ASK)
-    job = client.submit(wf).wait(timeout=timeout_s)
+    handle = client.submit(wf)
+    try:
+        job = handle.wait(timeout=timeout_s)
+    except TimeoutError:
+        try:  # nobody will read the answer: do not leave it running, or spending
+            handle.cancel()
+        except Exception:  # noqa: BLE001 — the timeout is the error to report
+            pass
+        raise
     if job.status != "succeeded":
         raise RuntimeError(f"describe job {job.id} {job.status}: {job.error}")
     outputs = job.get_outputs(spec.output_node)

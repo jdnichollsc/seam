@@ -13,6 +13,8 @@ renders at a time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the fir
 
 1. Call `seam_status`. If it fails, the Seam server is not running: ask the user to run `seam serve` (and that
    ComfyUI + `comfy-api-proxy` are up — `seam doctor` checks everything). Do not try to start GPU services yourself.
+   If `seam_status` reports `backend: cloud`, tell the user before rendering that the shots go to Comfy Cloud and
+   the takes spend their credits. Never switch the backend or handle an API key: both are the user's.
 2. Call `list_presets` and only use ids it returns — they are the qualified effects. Never invent preset ids.
 
 ## The loop

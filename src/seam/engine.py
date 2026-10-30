@@ -16,6 +16,7 @@ from typing import Any
 
 from comfy_sdk import Comfy, Progress, StatusChange
 
+from . import backend as backends
 from . import describe as shots
 from . import media, receipt
 from .config import Settings
@@ -29,6 +30,7 @@ SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may sti
 SECONDS_CHOICES = (5, 8, 10)  # what the graphs render; each launch effect lists the lengths it is qualified at
 PUBLIC_MODELS = ("l25", "l23")  # LTX family only: other models were research-only and never ship
 SEQUENCE_SHOTS = (2, 8)
+CLOUD_GRACE_S = 30.0
 SEQ = "seq:"  # worker queue items for sequences (reconcile/join), next to plain job ids
 
 
@@ -65,10 +67,9 @@ class Engine:
     def __init__(self, settings: Settings, store: JobStore, client: Comfy | None = None) -> None:
         self.settings = settings
         self.store = store
-        if client is None:
-            os.environ.setdefault("COMFY_BASE_URL", settings.comfy_base_url)  # the SDK reads its endpoint from env
-            client = Comfy(client_info="seam/0.1")
-        self.client = client
+        self.client = client  # tests inject one; otherwise client_for builds one per backend
+        self._clients: dict[tuple[str, str | None], Comfy] = {}
+        self._clients_lock = threading.Lock()
         self._specs: dict[str, WorkflowSpec] = {}
         self.presets: dict[str, Preset] = load_presets(settings.presets_file)
         self._queue: queue.Queue[str] = queue.Queue()
@@ -94,6 +95,25 @@ class Engine:
             if seq.status in ("running", "assembling"):
                 self._queue.put(SEQ + seq.id)
         self._worker.start()
+
+    # -- backends -------------------------------------------------------------------------------
+    def client_for(self, backend: str) -> Comfy:
+        """The client of one backend, rebuilt when the Cloud key changes."""
+        if self.client is not None:
+            return self.client
+        key = (backend, backends.cloud_key(self.settings)[0] if backend == backends.CLOUD else None)
+        with self._clients_lock:
+            if key not in self._clients:
+                self._clients[key] = backends.make_client(self.settings, backend)
+            return self._clients[key]
+
+    @staticmethod
+    def backend_of(job: JobRecord) -> str:
+        return job.extra.get("backend", backends.LOCAL)  # takes from before Comfy Cloud rendered locally
+
+    def active_cloud_jobs(self) -> list[JobRecord]:
+        return [j for j in self.store.list(limit=10_000)
+                if j.status in ("queued", "running") and self.backend_of(j) == backends.CLOUD]
 
     # -- models ---------------------------------------------------------------------------------
     @staticmethod
@@ -144,7 +164,10 @@ class Engine:
             req.seed = random.randint(1, 2**31 - 1)
         self.validate(req)
         req.model = self.model_for(req)  # pin the resolved model on the job
-        job = self.store.create(req.to_params(), parent_id=parent_id, extra=extra)
+        backend = backends.current(self.settings)[0]
+        self.client_for(backend)  # no Cloud key: refused here, before anything is queued
+        # a take renders where it was asked to: a later switch never moves it, and a restart re-attaches to the same place
+        job = self.store.create(req.to_params(), parent_id=parent_id, extra={**(extra or {}), "backend": backend})
         if enqueue:
             self._queue.put(job.id)
         return job
@@ -174,9 +197,16 @@ class Engine:
             raise KeyError(job_id)
         with self._submit_lock:  # vs submit, handle registration and the final status write in _execute
             handle = self._handles.get(job_id)  # a submitted take can read "queued" again (shared GPU queue)
-            if handle is not None:
-                handle.cancel()
-            return self.store.update(job_id, status="cancelled")
+            error = None
+            try:
+                if handle is None and job.comfy_job_id and job.status in ("queued", "running"):
+                    # re-attached after a restart and still waiting for the worker: it runs remotely all the same
+                    handle = self.client_for(self.backend_of(job)).jobs.get(job.comfy_job_id)
+                if handle is not None:
+                    handle.cancel()
+            except Exception as e:  # noqa: BLE001 — the user asked to stop: say what we could not do
+                error = f"could not stop it on {self._where(job)} ({type(e).__name__}); it may still be running there"
+            return self.store.update(job_id, status="cancelled", **({"error": error} if error else {}))
 
     # -- sequences ------------------------------------------------------------------------------
     def create_sequence(self, shots: list[dict[str, Any]], segments: list[dict[str, Any]],
@@ -523,15 +553,31 @@ class Engine:
                              a_desc=req.a_desc or None, b_desc=req.b_desc or None, extra=req.prompt_extra,
                              seconds=req.seconds, story=req.story or "")
 
-    def describe(self, image: Path) -> ShotText | None:
+    @staticmethod
+    def _where(job: JobRecord) -> str:
+        return "Comfy Cloud" if Engine.backend_of(job) == backends.CLOUD else "ComfyUI"
+
+    @staticmethod
+    def _describe_cache(image: Path) -> Path:
+        return image.with_name(f"{image.stem}.describe-v{shots.VERSION}.json")
+
+    def cached_description(self, image: Path) -> tuple[bool, ShotText | None]:
+        """(known, text): reading a cached shot submits nothing."""
+        cache = self._describe_cache(image)
+        if not cache.is_file():
+            return False, None
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        return True, ShotText(**data) if data else None
+
+    def describe(self, image: Path, backend: str | None = None) -> ShotText | None:
         """Description + label for one shot, cached per upload (uploads are content-addressed)."""
-        cache = image.with_name(f"{image.stem}.describe-v{shots.VERSION}.json")
-        if cache.is_file():
-            data = json.loads(cache.read_text(encoding="utf-8"))
-            return ShotText(**data) if data else None
+        known, text = self.cached_description(image)
+        if known:
+            return text
+        cache = self._describe_cache(image)
         if "describe" not in self._specs:
             self._specs["describe"] = load_spec(self.settings.workflows_dir, "describe")
-        text = shots.run(self.client, self._specs["describe"], image)
+        text = shots.run(self.client_for(backend or backends.current(self.settings)[0]), self._specs["describe"], image)
         tmp = cache.with_name(f"{cache.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(text.__dict__ if text else None), encoding="utf-8")
         tmp.replace(cache)  # a concurrent reader never sees half a file
@@ -546,7 +592,7 @@ class Engine:
             if getattr(req, f"{side}_desc") is not None:
                 continue
             try:
-                text = self.describe(Path(image))
+                text = self.describe(Path(image), self.backend_of(job))
             except Exception as e:  # noqa: BLE001 — fall back to the generic prompt, never fail the render
                 text = None
                 changes.setdefault("extra", {**job.extra})["describe_error"] = f"{type(e).__name__}: {e}"[:300]
@@ -584,8 +630,10 @@ class Engine:
     def _execute(self, job: JobRecord) -> None:
         req = TransitionRequest(**job.params)
         t0 = time.monotonic()
+        backend = self.backend_of(job)
+        client = self.client_for(backend)
         if job.comfy_job_id:
-            handle = self.client.jobs.get(job.comfy_job_id)
+            handle = client.jobs.get(job.comfy_job_id)
         else:
             req = self._fill_descriptions(job, req)
             spec = self.spec(self.model_for(req))
@@ -598,14 +646,14 @@ class Engine:
             if "enhance_prompt" in spec.slots:
                 # P0: the in-graph enhancer (local Gemma-4 E2B) fixes LTX-2.5 dissolves and end-jumps
                 params["enhance_prompt"] = req.enhance
-            wf = build(self.client, spec, Path(req.image_a), Path(req.image_b), params)
+            wf = build(client, spec, Path(req.image_a), Path(req.image_b), params)
             # keep the exact graph this take runs, so its receipt and ComfyUI bundle never follow later template edits
             receipt.archive_graph(job.id, spec, params, self.settings.outputs_dir)
             with self._submit_lock:
                 if self.store.get(job.id).status == "cancelled":  # cancelled while its shots were being read
                     return
                 self.store.update(job.id, extra={**self.store.get(job.id).extra, "submitting_at": time.time()})
-                handle = self.client.submit(wf)
+                handle = client.submit(wf)
                 self.store.update(job.id, status="running", comfy_job_id=handle.id,
                                   extra={**self.store.get(job.id).extra, "prompt": prompt, "width": width,
                                          "height": height, "submitted_at": time.time()})
@@ -614,19 +662,11 @@ class Engine:
             if self.store.get(job.id).status == "cancelled":  # cancelled between submit and here
                 handle.cancel()
                 return
-        for ev in handle.events():
-            if isinstance(ev, Progress) and ev.value is not None:
-                self.store.update(job.id, progress=round(float(ev.value), 3))
-            elif isinstance(ev, StatusChange):
-                if ev.status == "cancelled":
-                    break
-                if ev.status in ("queued", "running"):  # the GPU queue is shared: reflect where we are
-                    with self._submit_lock:
-                        if self.store.get(job.id).status == "cancelled":
-                            break
-                        self.store.update(job.id, status=ev.status,
-                                          extra={**self.store.get(job.id).extra, "queue_position": ev.queue_position})
-        handle = handle.wait(timeout=self.settings.job_timeout_s)
+        if backend == backends.CLOUD:
+            handle = self._follow_cloud(job.id, handle)
+        else:
+            self._follow(job.id, handle)
+            handle = handle.wait(timeout=self.settings.job_timeout_s)
         if self.store.get(job.id).status == "cancelled":
             return
         if handle.status != "succeeded":
@@ -652,6 +692,56 @@ class Engine:
             self.write_receipt(job.id)
         except Exception:  # noqa: BLE001 — the take is done; the receipt is rebuilt on request
             pass
+
+    def _follow(self, job_id: str, handle: Any) -> None:
+        for ev in handle.events():
+            if isinstance(ev, Progress) and ev.value is not None:
+                self.store.update(job_id, progress=round(float(ev.value), 3))
+            elif isinstance(ev, StatusChange):
+                if ev.status == "cancelled":
+                    break
+                if ev.status in ("queued", "running"):  # the GPU queue is shared: reflect where we are
+                    with self._submit_lock:
+                        if self.store.get(job_id).status == "cancelled":
+                            break
+                        self.store.update(job_id, status=ev.status,
+                                          extra={**self.store.get(job_id).extra, "queue_position": ev.queue_position})
+
+    def _follow_cloud(self, job_id: str, handle: Any) -> Any:
+        """Follow a Cloud take with a real deadline: the event stream reconnects forever and has none of its own, and
+        a take nobody is watching keeps spending. Past the deadline the take is cancelled, never submitted again."""
+        submitted = self.store.get(job_id).extra.get("submitted_at", time.time())
+        # a take that finished while the server was down still gets looked at, so its paid output is not thrown away
+        remaining = max(CLOUD_GRACE_S, submitted + self.settings.job_timeout_s - time.time())
+        failure: list[BaseException] = []
+
+        def follow() -> None:
+            try:
+                self._follow(job_id, handle)
+            except BaseException as e:  # noqa: BLE001 — handed to the worker below
+                failure.append(e)
+
+        watcher = threading.Thread(target=follow, daemon=True, name=f"seam-follow-{job_id}")
+        watcher.start()
+        watcher.join(remaining)
+        if watcher.is_alive():
+            self._give_up(handle)
+        if failure:
+            raise failure[0]
+        try:
+            return handle.wait(timeout=CLOUD_GRACE_S)
+        except TimeoutError:
+            self._give_up(handle)
+            raise
+
+    def _give_up(self, handle: Any) -> None:
+        limit = f"not finished after {self.settings.job_timeout_s:.0f} s"
+        try:
+            handle.cancel()
+        except Exception as e:  # noqa: BLE001
+            raise TimeoutError(f"{limit}, and cancelling it failed ({type(e).__name__}): it may still be running on "
+                               "Comfy Cloud") from None
+        raise TimeoutError(f"{limit}: cancelled on Comfy Cloud. Use New take to try again") from None
 
     def _finish(self, job: JobRecord, req: TransitionRequest, t0: float, mp4: Path, info: Any, merged: str | None,
                 merge_error: str | None) -> None:

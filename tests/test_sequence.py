@@ -85,7 +85,7 @@ def test_sequence_joins_each_clip_once_at_one_canvas(seam) -> None:
     assert (t0.params["width"], t0.params["height"]) == (w, h) == (t1.params["width"], t1.params["height"])
     assert Path(t0.params["image_b"]).name == mid["first"] and Path(t1.params["image_a"]).name == mid["last"]
     assert not t0.params["clip_a"] and not t0.params["clip_b"] and not t1.params["clip_b"]  # the join adds clips
-    assert t0.extra == {"sequence_id": seq["id"], "segment": 0} and t1.params["seconds"] == 10
+    assert t0.extra == {"sequence_id": seq["id"], "segment": 0, "backend": "local"} and t1.params["seconds"] == 10
     assert _drain(e) == seq["segments"]
 
     _render(e, t0.id)
@@ -136,7 +136,7 @@ def test_reroll_one_segment_rejoins_with_a_new_file(seam) -> None:
     new = e.store.get(again["segments"][0])
     assert again["status"] == "running" and again["segments"][1] == seq["segments"][1]  # segment 2 is reused
     assert new.parent_id == seq["segments"][0] and new.params["preset"] == "whip_pan" and new.params["seed"] != 1
-    assert new.params["width"] == first.width and new.extra == {"sequence_id": seq["id"], "segment": 0}
+    assert new.params["width"] == first.width and new.extra == {"sequence_id": seq["id"], "segment": 0, "backend": "local"}
     assert _drain(e) == [new.id]
     _render(e, new.id)
     e._reconcile(seq["id"])
@@ -280,7 +280,7 @@ def test_continue_a_two_shot_take_with_clips(seam) -> None:
     assert seq["shots"][1]["first"] == clip_b["id"] and seq["shots"][1]["last"] != clip_b["id"]  # B's last frame
     new = e.store.get(seq["segments"][1])
     assert Path(new.params["image_a"]).name == seq["shots"][1]["last"] and not new.params["clip_a"]
-    assert e.store.get(job["id"]).extra == {}  # the original take is left as it was
+    assert e.store.get(job["id"]).extra == {"backend": "local"}  # the original take is left as it was
     assert _drain(e) == [new.id]
     _render(e, new.id)
     e._reconcile(seq["id"])

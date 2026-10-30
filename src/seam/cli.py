@@ -61,6 +61,10 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("--extra", help="text appended to the preset prompt")
     sr.add_argument("-o", "--out", type=Path, default=Path("seam_sequence.mp4"))
     sub.add_parser("mcp", help="run the MCP server (stdio) — talks to a running `seam serve`")
+    bk = sub.add_parser("backend", help="where takes render: this machine or Comfy Cloud")
+    bk.add_argument("use", nargs="?", choices=["local", "cloud"], help="switch (omit to show the current one)")
+    bk.add_argument("--set-key", action="store_true", help="save a Comfy Cloud API key (asked for, or read from stdin)")
+    bk.add_argument("--clear-key", action="store_true", help="forget the saved Comfy Cloud API key")
     sub.add_parser("doctor", help="check ffmpeg, the Comfy API endpoint, models and the web build")
     args = ap.parse_args(argv)
 
@@ -69,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
 
         run()
         return 0
+    if args.cmd == "backend":
+        return _backend(args)
     if args.cmd == "doctor":
         from .doctor import run_doctor
 
@@ -100,6 +106,10 @@ def main(argv: list[str] | None = None) -> int:
     from .jobs import JobStore
 
     settings.ensure_dirs()
+    from . import backend as backends
+
+    if backends.current(settings)[0] == backends.CLOUD:
+        print("rendering on Comfy Cloud: the shots are uploaded and this uses your credits", flush=True)
     engine = Engine(settings, JobStore(settings.db_path))
     engine.start()
     job = engine.submit(TransitionRequest(image_a=str(store_upload(settings, args.image_a)),
@@ -121,6 +131,35 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     shutil.copy(settings.outputs_dir / j.output, args.out)
     print(json.dumps({"out": str(args.out), "wall_s": j.wall_s, **j.extra}, default=str, indent=1))
+    return 0
+
+
+def _backend(args: argparse.Namespace) -> int:
+    import getpass
+
+    from . import backend as backends
+    from .config import get_settings
+
+    settings = get_settings()
+    try:
+        if args.clear_key:
+            backends.clear_key(settings)
+        if args.set_key:  # never an argument: it would stay in the shell history
+            key = getpass.getpass("Comfy Cloud API key: ") if sys.stdin.isatty() else sys.stdin.read()
+            backends.verify_key(key)
+            backends.save_key(settings, key)
+        if args.use:
+            locked = backends.locked_by_env(settings)
+            if locked:
+                raise ValueError(f"{locked} decides where Seam renders; change it instead")
+            backends.choose(settings, args.use)
+    except ValueError as e:
+        print(f"seam: {e}", file=sys.stderr)
+        return 1
+    st = backends.state(settings)
+    print(f"rendering on: {'Comfy Cloud (uses your credits)' if st['backend'] == backends.CLOUD else 'this machine'}"
+          f" [{st['source']}]")
+    print(f"Comfy Cloud key: {st['cloud']['key_source'] or f'not set (create one at {backends.KEYS_URL})'}")
     return 0
 
 

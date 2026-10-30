@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import media, receipt
+from . import backend as backends
 from .config import PACKAGE_DIR, get_settings
 from .engine import Engine, SequenceBusy, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
@@ -40,6 +41,10 @@ engine: Engine | None = None
 async def lifespan(app: FastAPI):
     global engine
     settings.ensure_dirs()
+    if backends.current(settings)[0] == backends.CLOUD and not _is_loopback(settings.host):
+        # no authentication here: anyone who can reach this server could spend the key's credits
+        raise RuntimeError(f"Comfy Cloud needs Seam on localhost: SEAM_HOST is {settings.host}. Set SEAM_HOST=127.0.0.1, "
+                           "or run `seam backend local`")
     engine = Engine(settings, JobStore(settings.db_path))
     engine.start()
     yield
@@ -218,7 +223,63 @@ def _job_out(job: Any) -> dict[str, Any]:
 def health() -> dict[str, Any]:
     e = _engine()
     return {"ok": True, "model": settings.model, "comfy_base_url": settings.comfy_base_url,
-            "presets": len(e.exposed_presets())}
+            "backend": backends.current(settings)[0], "presets": len(e.exposed_presets())}
+
+
+def _backend_writes_allowed() -> None:
+    if not _is_loopback(settings.host):
+        raise HTTPException(403, "Comfy Cloud settings are only available when Seam runs on localhost")
+
+
+class BackendChoice(BaseModel):
+    backend: str
+
+
+class CloudKey(BaseModel):
+    api_key: str
+
+
+@app.get("/api/backend")
+def get_backend() -> dict[str, Any]:
+    """Where takes render, and whether a Comfy Cloud key is set (never the key)."""
+    return backends.state(settings)
+
+
+@app.put("/api/backend")
+def put_backend(body: BackendChoice) -> dict[str, Any]:
+    _backend_writes_allowed()
+    locked = backends.locked_by_env(settings)
+    if locked:
+        raise HTTPException(409, f"{locked} decides where Seam renders; change it and restart")
+    try:
+        backends.choose(settings, body.backend)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    return backends.state(settings)
+
+
+@app.put("/api/backend/key")
+def put_cloud_key(body: CloudKey) -> dict[str, Any]:
+    """Checked with a free read before it is saved: a refused key writes nothing."""
+    _backend_writes_allowed()
+    if not body.api_key.strip():
+        raise HTTPException(422, "paste a Comfy Cloud API key")
+    try:
+        backends.verify_key(body.api_key)
+    except backends.InvalidKey as e:
+        raise HTTPException(422, str(e)) from None
+    backends.save_key(settings, body.api_key)
+    return backends.state(settings)
+
+
+@app.delete("/api/backend/key")
+def delete_cloud_key() -> dict[str, Any]:
+    _backend_writes_allowed()
+    active = _engine().active_cloud_jobs()
+    if active:
+        raise HTTPException(409, f"{len(active)} take(s) are still on Comfy Cloud; wait for them or cancel them first")
+    backends.clear_key(settings)
+    return backends.state(settings)
 
 
 @app.get("/api/presets")
@@ -330,7 +391,14 @@ def create_transition(body: TransitionIn) -> dict[str, Any]:
 def describe_shot(upload_id: str) -> dict[str, Any]:
     """What Seam sees in one shot (local Gemma-4 E2B via the Comfy SDK); waits behind a render on the shared GPU."""
     try:
-        text = _engine().describe(_upload_path(upload_id))
+        path = _upload_path(upload_id)
+        if backends.current(settings)[0] == backends.CLOUD:
+            # adding a shot never spends credits: the take reads its own shots once the user presses Make
+            known, text = _engine().cached_description(path)
+            if not known:
+                return {"desc": "", "ref": "", "deferred": True}
+        else:
+            text = _engine().describe(path)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
@@ -405,9 +473,11 @@ def job_comfy_bundle(job_id: str) -> Response:
 
 @app.get("/api/estimate")
 def estimate(seconds: int = 5) -> dict[str, Any]:
-    """Typical render time on this machine for a take of this length: median of the last succeeded ones."""
-    times = [j.wall_s for j in _engine().store.list(limit=100) if j.status == "succeeded" and j.wall_s
-             and j.params.get("seconds", 5) == seconds][:10]
+    """Typical render time for a take of this length where Seam renders now: median of the last succeeded ones."""
+    e = _engine()
+    here = backends.current(settings)[0]
+    times = [j.wall_s for j in e.store.list(limit=100) if j.status == "succeeded" and j.wall_s
+             and j.params.get("seconds", 5) == seconds and e.backend_of(j) == here][:10]
     return {"seconds": round(statistics.median(times)) if times else None, "samples": len(times)}
 
 

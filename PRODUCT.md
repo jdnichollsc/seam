@@ -20,7 +20,7 @@ The open, local counterpart to hosted transition apps: no accounts, no credits, 
 
 ## Operating Context
 
-- Runs at `http://127.0.0.1:7860` against a local ComfyUI (via comfy-api-proxy); the same server backs a CLI and an MCP server/agent plugin.
+- Runs at `http://127.0.0.1:7860` against a local ComfyUI (via comfy-api-proxy) or the user's Comfy Cloud account; the same server backs a CLI and an MCP server/agent plugin.
 - Renders take ~30–60 s each on an RTX 5090; the ComfyUI queue is shared, so takes can wait in line.
 - Only qualified effects are exposed (today: Smoke, Water Bend, Whip Pan, Lava, Beast, Ink, Light Burst, Zoom Through, Melt, Wind Vortex; 10 s takes for the first three), LTX-2.5 only. No model picker.
 

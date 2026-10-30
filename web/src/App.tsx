@@ -8,6 +8,8 @@ import {
   sequenceReceiptUrl,
   subscribe,
   uploadUrl,
+  type BackendName,
+  type BackendState,
   type Health,
   type Job,
   type Preset,
@@ -410,6 +412,99 @@ function Icon({ name }: { name: keyof typeof ICONS }) {
   )
 }
 
+/** Where takes render: the status chip opens the choice. The key is write-only: it goes to the local server, never back. */
+function BackendControl({ health, healthError, onChange }: {
+  health: Health | null
+  healthError: string | null
+  onChange: (backend: BackendName) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [state, setState] = useState<BackendState | null>(null)
+  const [settingUpCloud, setSettingUpCloud] = useState(false)  // Comfy Cloud picked, no key yet: nothing switched so far
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<string | null>(null)
+
+  const run = async (action: () => Promise<BackendState>) => {
+    setBusy(true)
+    setProblem(null)
+    try {
+      const next = await action()
+      setState(next)
+      setKey('')
+      setSettingUpCloud(false)
+      onChange(next.backend)
+    } catch (e) {
+      setProblem((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const toggle = () => {
+    if (!open) {
+      setSettingUpCloud(false)
+      setProblem(null)
+      api.backend().then(setState).catch((e) => setProblem(String(e.message ?? e)))
+    }
+    setOpen(!open)
+  }
+  const locked = state && (state.source === 'SEAM_BACKEND' || state.source === 'COMFY_BASE_URL')
+  const showCloud = state?.backend === 'cloud' || settingUpCloud
+  const pickCloud = () => {
+    if (state?.cloud.key_configured) void run(() => api.setBackend('cloud'))
+    else setSettingUpCloud(true)
+  }
+  const saveKey = () =>
+    run(async () => {
+      const saved = await api.setCloudKey(key)
+      return saved.backend === 'cloud' || locked ? saved : api.setBackend('cloud')  // they picked Comfy Cloud to get here
+    })
+  const label = health
+    ? health.backend === 'cloud' ? 'Comfy Cloud' : 'Your GPU'
+    : healthError ? 'Engine offline · run seam serve' : 'Connecting…'
+
+  return (
+    <div className="backend">
+      <button type="button" className={`engine ${health ? 'is-up' : healthError ? 'is-down' : ''}`} aria-expanded={open}
+        disabled={!health} onClick={toggle}>
+        {label}
+      </button>
+      {open && state && (
+        <div className="backend-panel" role="group" aria-label="Where takes render">
+          <p className="backend-title">Where takes render</p>
+          <div className="backend-choice">
+            <button type="button" className={showCloud ? '' : 'is-on'} disabled={busy || !!locked}
+              onClick={() => (state.backend === 'local' ? setSettingUpCloud(false) : void run(() => api.setBackend('local')))}>Your GPU</button>
+            <button type="button" className={showCloud ? 'is-on' : ''} disabled={busy || !!locked} onClick={pickCloud}>Comfy Cloud</button>
+          </div>
+          {locked && <p className="backend-note">{state.source} decides this.</p>}
+          {!showCloud && !locked && <p className="backend-note">Renders on this machine with your ComfyUI. No credits.</p>}
+          {showCloud && (
+            <>
+              <p className="backend-note">Your shots are uploaded to Comfy Cloud and takes use your credits. Takes already started stay where they are.</p>
+              <form onSubmit={(e) => { e.preventDefault(); void saveKey() }}>
+                <label htmlFor="cloud-key">Comfy Cloud API key</label>
+                <div className="backend-key">
+                  <input id="cloud-key" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)}
+                    placeholder={state.cloud.key_configured ? 'Saved · paste to replace' : 'Paste your key'} />
+                  <button type="submit" className="btn btn-outline" disabled={busy || !key.trim()}>{busy ? 'Checking…' : 'Save'}</button>
+                </div>
+              </form>
+              <p className="backend-note">
+                <a href={state.keys_url} target="_blank" rel="noreferrer">Create a key</a>
+                {state.cloud.key_source === 'saved' && (
+                  <> · <button type="button" className="backend-link" disabled={busy} onClick={() => run(api.clearCloudKey)}>Forget the saved key</button></>
+                )}
+              </p>
+            </>
+          )}
+          {problem && <p className="backend-problem" role="alert">{problem}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** A ComfyUI-style node: title chip with its socket colour, optional meta on the right. */
 function Node({ title, socket, meta, className = '', children, label, wire }: {
   wire?: string
@@ -681,13 +776,15 @@ function Slot({ label, side, value, busy, onFile, onClear }: SlotProps) {
 }
 
 /** What Seam read in one shot, bound to the upload it came from so a late answer never lands on a new image. */
-type Note = { upload: string; desc: string; ref: string; state: 'reading' | 'ready' | 'failed'; edited: boolean }
+type Note = { upload: string; desc: string; ref: string; state: 'reading' | 'ready' | 'failed' | 'deferred'; edited: boolean }
 
 function ShotNote({ label, note, onEdit }: { label: string; note: Note | null; onEdit: (text: string) => void }) {
   if (!note) return <div className="note-cell" />
   const placeholder =
     note.state === 'reading'
       ? 'Reading the shot…'
+      : note.state === 'deferred'
+        ? 'Seam reads this shot when you press Make. Or describe it here.'
       : note.state === 'failed'
         ? 'Could not read it. Describe it, or Seam tries again when you render.'
         : 'Empty: the prompt will not describe this shot'
@@ -709,7 +806,7 @@ function shotFields(side: 'a' | 'b', note: Note | null): ShotFields {
 function statusText(job: Job): string {
   switch (job.status) {
     case 'queued':
-      return 'Waiting for the GPU'  // the ComfyUI queue is shared
+      return job.extra?.backend === 'cloud' ? 'Waiting for Comfy Cloud' : 'Waiting for the GPU'  // the ComfyUI queue is shared
     case 'running':
       return job.progress > 0 ? `Rendering ${Math.round(job.progress * 100)}%` : 'Loading the model'
     case 'succeeded':
@@ -1006,6 +1103,7 @@ function Diptych({ a, b, label, dim }: { a: string | null; b: string | null; lab
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null)
   const [healthError, setHealthError] = useState<string | null>(null)
+  const onCloud = health?.backend === 'cloud'
   const [presets, setPresets] = useState<Preset[]>([])
   const [family, setFamily] = useState('all')
   const [preset, setPreset] = useState<string>('')
@@ -1038,6 +1136,7 @@ export default function App() {
   const root = useRef<HTMLDivElement>(null)
   const doneCount = jobs.filter((j) => j.status === 'succeeded').length
   useEffect(() => {
+    setEstimate(null)
     api.estimate(seconds).then((e) => setEstimate(e.seconds)).catch(() => {})
   }, [doneCount, seconds])
 
@@ -1053,7 +1152,7 @@ export default function App() {
       setNotes((prev) => ({ ...prev, [which]: { upload, desc: '', ref: '', state: 'reading', edited: false } }))
       api
         .describe(upload)
-        .then((t) => updateNote(which, upload, (n) => (n.edited ? n : { ...n, ...t, state: t.desc ? 'ready' : 'failed' })))
+        .then((t) => updateNote(which, upload, (n) => (n.edited ? n : { ...n, ...t, state: t.deferred ? 'deferred' : t.desc ? 'ready' : 'failed' })))
         .catch(() => updateNote(which, upload, (n) => (n.edited ? n : { ...n, state: 'failed' })))
     },
     [updateNote],
@@ -1396,11 +1495,9 @@ export default function App() {
           </svg>
           <span className="brand-tag">Seam</span>
         </a>
-        <p className="tagline">Two shots in, one transition out. Open models, your own GPU, every take a ComfyUI workflow.</p>
+        <p className="tagline">Two shots in, one transition out. Open models, your GPU or Comfy Cloud, every take a ComfyUI workflow.</p>
         <div className="top-end">
-          <span className={`engine ${health ? 'is-up' : healthError ? 'is-down' : ''}`} role="status">
-            {health ? 'Engine ready' : healthError ? 'Engine offline · run seam serve' : 'Connecting…'}
-          </span>
+          <BackendControl health={health} healthError={healthError} onChange={(backend) => setHealth((h) => (h ? { ...h, backend } : h))} />
           <a className="btn-icon" href={REPO} target="_blank" rel="noreferrer" title="Seam on GitHub" aria-label="Seam on GitHub">
             <Icon name="github" />
           </a>
@@ -1566,12 +1663,16 @@ export default function App() {
               {mode === 'seq'
                 ? shots.length < 2
                   ? 'Add at least two shots, in the order they play.'
-                  : 'Each transition renders on your GPU, then Seam joins them · no credits'
+                  : onCloud
+                    ? 'Each transition renders on Comfy Cloud, then Seam joins them · uses your credits'
+                    : 'Each transition renders on your GPU, then Seam joins them · no credits'
                 : !a || !b
                 ? 'Add a first and a last shot to start.'
-                : estimate
-                  ? `About ${estimate} s once it starts · no credits, runs on your GPU`
-                  : 'Runs on your GPU · no credits'}
+                : onCloud
+                  ? `${estimate ? `About ${estimate} s once it starts · ` : ''}Your shots go to Comfy Cloud · uses your credits`
+                  : estimate
+                    ? `About ${estimate} s once it starts · no credits, runs on your GPU`
+                    : 'Runs on your GPU · no credits'}
             </p>
             {error && (
               <p className="error" role="alert">
@@ -1731,7 +1832,7 @@ export default function App() {
                   <ol className="out-steps">
                     <li>Drop a first and a last shot</li>
                     <li>Pick an effect, or let Seam surprise you</li>
-                    <li>Make it: about a minute on your GPU</li>
+                    <li>{onCloud ? 'Make it on Comfy Cloud, with your credits' : 'Make it: about a minute on your GPU'}</li>
                   </ol>
                 </div>
               )}
