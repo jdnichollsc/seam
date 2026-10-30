@@ -20,7 +20,7 @@
 <p align="center">
   <a href="https://www.youtube.com/watch?v=kO4elynSEww"><img src="docs/media/readme/demo-poster.jpg" width="640" alt="Watch the 2-minute demo"></a>
   <br>
-  <b><a href="docs/media/seam-demo.mp4">▶ Watch the 2-minute demo</a></b> · <a href="https://jdnichollsc.github.io/seam/">Project site</a> · <a href="install.md">Install</a>
+  <b><a href="https://www.youtube.com/watch?v=kO4elynSEww">▶ Watch the 2-minute demo</a></b> · <a href="https://jdnichollsc.github.io/seam/">Project site</a> · <a href="install.md">Install</a>
 </p>
 
 ---
