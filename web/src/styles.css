@@ -392,3 +392,106 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .glb .error { padding: 8px 12px 0; }
 .glb-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; }
 .glb-hint { flex: 1 1 260px; margin: 0; color: var(--dim); font-size: 13px; }
+
+/* Sequence mode: shots in order, the hand-off between each pair edits through the Effect node */
+.mode { padding: 0 10px 10px; }
+.shotlist { list-style: none; margin: 0; padding: 0 10px 12px; display: grid; gap: 4px; }
+.shot { display: grid; grid-template-columns: 64px 1fr auto; align-items: center; gap: 10px; padding: 4px; border-radius: 10px; background: var(--ink-raise); }
+.shot img { width: 64px; height: 40px; object-fit: cover; border-radius: 7px; background: #000; }
+.shot-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; font-weight: 700; font-size: 14px; }
+.shot-clip { color: var(--dim); font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.shot-tools { display: flex; gap: 2px; }
+
+.shot-tools .btn-icon:disabled { opacity: 0.3; background: none; color: var(--dim); }
+.handoff { display: flex; padding-left: 26px; }
+.handoff button {
+  display: inline-flex; align-items: center; gap: 8px; padding: 3px 8px 3px 3px; border: 1px dashed var(--line-strong);
+  border-radius: 9px; background: transparent; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
+  transition: border-color 0.2s, color 0.2s;
+}
+.handoff .chip { --sock: var(--sock-effect); height: 22px; font-size: 13px; }
+.handoff button:hover { border-color: var(--sock-effect); color: var(--text); }
+.handoff button[aria-pressed='true'] { border-style: solid; border-color: var(--sock-effect); color: var(--text); }
+.shot-add button {
+  display: grid; justify-items: center; gap: 2px; width: 100%; padding: 12px; border: 1.5px dashed var(--line-strong);
+  border-radius: 10px; background: transparent; color: var(--muted); font-weight: 700;
+}
+.shot-add .icon { color: var(--sock-image); }
+.shot-add button:hover, .shot-add.is-over button { border-color: var(--sock-image); color: var(--text); }
+.seq-stage { position: absolute; inset: 0; display: flex; gap: 2px; transition: filter 0.4s; }
+.seq-stage.is-dim { filter: brightness(0.55) saturate(0.8); }
+.seq-stage img { flex: 1; min-width: 0; height: 100%; object-fit: cover; }
+.seq-takes { list-style: none; margin: 0; padding: 0 10px 10px; display: grid; gap: 6px; }
+.seq-take { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 12px; padding: 6px; border-radius: 10px; background: var(--ink-raise); }
+.seq-take-media { display: grid; place-items: center; width: 72px; height: 42px; border-radius: 7px; overflow: hidden; background: #0e0a11; }
+.seq-take-media img { width: 100%; height: 100%; object-fit: cover; }
+.seq-take-media .bar { width: 52px; }
+.seq-take-text { display: grid; min-width: 0; }
+.seq-take-title { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+.seq-take-status { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seq-take.is-failed .seq-take-status, .seq-take.is-interrupted .seq-take-status { color: var(--danger); }
+.seq-take-actions { display: flex; gap: 6px; }
+.card-strip { position: absolute; inset: 0; display: flex; gap: 2px; filter: brightness(0.7); }
+.card-strip img { flex: 1; min-width: 0; object-fit: cover; }
+@media (max-width: 520px) {
+  .seq-take { grid-template-columns: 56px 1fr; }
+  .seq-take-media { width: 56px; }
+  .seq-take-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
+
+/* Grow a story: the next shot after a finished take or sequence */
+.add-next { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px; margin: 0 10px 10px; border: 1.5px dashed var(--line-strong); border-radius: 10px; transition: border-color 0.2s; }
+.add-next.is-over { border-color: var(--sock-image); }
+.add-next .icon { width: 16px; height: 16px; }
+.add-next-note { color: var(--dim); font-size: 13px; }
+.canvas > .add-next { margin: 0 0 16px; }
+
+/* Grow a story, step 2: where it leaves from, the effect into the new shot, the new shot */
+.add-next.is-off { opacity: 0.7; }
+.add-next.is-staged { flex-direction: column; align-items: stretch; border-style: solid; border-color: var(--sock-effect); }
+.next-chain { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.next-end { margin: 0; display: grid; gap: 4px; }
+.next-end img, .next-end video, .next-blank { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 8px; background: var(--ink-deep); display: block; }
+.next-end figcaption, .next-effect span { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.next-effect { display: grid; gap: 4px; min-width: 150px; }
+.next-effect select { min-height: 36px; padding: 0 10px; border-radius: var(--r-ctl); border: 1.5px solid var(--sock-effect); background: var(--ink-raise); color: var(--text); font: inherit; }
+.next-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+@media (max-width: 560px) { .next-chain { grid-template-columns: 1fr; } }
+
+/* Sequence: a new take of one transition, and the storyboard (story + shots in order) */
+.seq-take.is-editing { grid-template-columns: 72px 1fr auto; }
+.take-edit { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; padding: 10px 4px 4px; border-top: 1px solid var(--line); }
+.take-edit label, .take-edit-len { display: grid; gap: 4px; }
+.take-edit label > span, .take-edit-len > span, .board-story > span, .story-field > span { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.take-edit-wide { grid-column: 1 / -1; }
+.take-edit textarea, .take-edit input, .board-story textarea, .story-field textarea, .board-link input, .board-link select { font: inherit; color: var(--text); background: var(--ink-raise); border: 1.5px solid var(--line-strong); border-radius: var(--r-ctl); padding: 8px 10px; }
+.take-edit .take-edit-seed input { max-width: 160px; }
+.take-edit .next-actions { grid-column: 1 / -1; }
+.take-edit-note { grid-column: 1 / -1; margin: 0; color: var(--dim); font-size: 13px; }
+.seq-take-extra { color: var(--dim); }
+.tag-quiet { margin-left: 8px; font-size: 11px; opacity: 0.8; }
+.story-field { display: grid; gap: 4px; margin-bottom: 10px; }
+.board { display: grid; gap: 10px; padding: 0 10px 10px; }
+.board-story { display: grid; gap: 4px; }
+.board-story textarea { resize: vertical; min-height: 40px; }
+.board-strip { list-style: none; margin: 0; padding: 2px 0 6px; display: flex; align-items: center; gap: 8px; overflow-x: auto; }
+.board-item { display: flex; align-items: center; gap: 8px; flex: none; }
+.board-shot { margin: 0; width: 132px; display: grid; gap: 4px; padding: 4px; border-radius: 10px; background: var(--ink-raise); cursor: grab; }
+.board-shot.is-drag { opacity: 0.45; }
+.board-shot img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 7px; display: block; }
+.board-shot figcaption { display: flex; align-items: center; justify-content: space-between; gap: 4px; font-size: 12px; font-weight: 700; }
+.board-shot em { font-style: normal; font-weight: 400; color: var(--dim); }
+.board-tools { display: flex; gap: 2px; }
+.board-link { display: grid; gap: 4px; justify-items: center; min-width: 74px; font-size: 12px; color: var(--dim); }
+.board-link-name { color: var(--text); font-weight: 700; }
+.board-link.is-new { min-width: 150px; padding: 6px; border: 1.5px dashed var(--sock-effect); border-radius: 10px; }
+.board-link.is-new select, .board-link.is-new input { width: 100%; padding: 6px 8px; font-size: 13px; }
+.board-link-state { text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; }
+.board-link.is-new .board-link-state { color: var(--sock-effect); }
+.board-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 10px; border-radius: 10px; background: var(--ink-raise); border: 1.5px solid var(--sock-effect); }
+.board-bar > span { flex: 1 1 240px; }
+
+/* Grow a story: the new transition's own direction */
+.next-direction { display: grid; gap: 4px; }
+.next-direction > span { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.next-direction textarea { font: inherit; color: var(--text); background: var(--ink-raise); border: 1.5px solid var(--line-strong); border-radius: var(--r-ctl); padding: 8px 10px; resize: vertical; }

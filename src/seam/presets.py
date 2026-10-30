@@ -44,17 +44,22 @@ def timing_text(seconds: int) -> str:
 
 
 def render_prompt(model: str, preset: Preset, a_ref: str = "the first scene", b_ref: str = "the second scene",
-                  a_desc: str | None = None, b_desc: str | None = None, extra: str = "", seconds: int = 5) -> str:
-    """Model-specific prompt. a_desc/b_desc are optional full descriptions (e.g. written by an agent)."""
+                  a_desc: str | None = None, b_desc: str | None = None, extra: str = "", seconds: int = 5,
+                  story: str = "") -> str:
+    """Model-specific prompt. a_desc/b_desc are optional full descriptions (e.g. written by an agent); `story` is the
+    idea of a whole sequence, shared context placed before this transition's effect and direction."""
     path = preset.path.format(a=a_ref, b=b_ref)
     path = path[0].upper() + path[1:]
     extra = f" {extra.strip()}" if extra.strip() else ""
+    story = story.strip().rstrip(".")
+    context = f" Story of the whole film: {story}." if story else ""
     if model == "l25":
         opening = (f" The video opens on {a_desc}." if a_desc else "") + timing_text(seconds)
         ending = f" The video ends on {b_desc}." if b_desc else " The video ends exactly on the end image."
         return ("Use the provided start image as the first frame and the provided end image as the final frame "
-                f"anchor.{opening} {path} Camera: {preset.camera}. The sound is {preset.sound}.{extra}{ending}")
+                f"anchor.{context}{opening} {path} Camera: {preset.camera}. The sound is {preset.sound}.{extra}{ending}")
     if model == "l23":
         opening = f"{a_desc[0].upper() + a_desc[1:]}. " if a_desc else ""
-        return f"{opening}{path} Camera: {preset.camera}.{extra} One smooth continuous seamless transition, no cuts. zhuanchang"
+        return (f"{context.strip() + ' ' if context else ''}{opening}{path} Camera: {preset.camera}.{extra} "
+                "One smooth continuous seamless transition, no cuts. zhuanchang")
     raise ValueError(f"no prompt renderer for model {model!r}")

@@ -13,6 +13,7 @@ from mcp.server.mcpserver import Context, Image, MCPServer
 
 BASE = os.environ.get("SEAM_URL", "http://127.0.0.1:7860").rstrip("/")
 TERMINAL = {"succeeded", "failed", "cancelled", "interrupted"}
+SEQ_TERMINAL = {"succeeded", "failed", "cancelled"}
 
 server = MCPServer(
     name="seam",
@@ -22,7 +23,13 @@ server = MCPServer(
         "Seam makes a short video that transitions from image A to image B with an effect preset "
         "(smoke, water bend, whip pan, ...), rendered locally on ComfyUI with open-weights models. "
         "Typical flow: list_presets → create_transition(local image paths, preset) → wait_job → "
-        "preview_job to look at the result → refine_job to change preset/prompt/seed. Jobs run one at a "
+        "preview_job to look at the result → refine_job to change preset/prompt/seed. For a longer video through "
+        "several shots: create_sequence(shot paths in order, one effect per hand-off) → wait_sequence → preview_job "
+        "on each take → refine_segment for a bad one → preview_sequence. To grow a story shot by shot: "
+        "continue_take(a finished two-shot job, next shot) or extend_sequence(sequence, next shot). To edit a "
+        "sequence like a storyboard: edit_sequence(order without a shot = remove it, a new order = reorder; only "
+        "hand-offs whose shots become adjacent render) and a `story` (the idea of the whole film, shared by every "
+        "transition made after it is set). Jobs run one at a "
         "time; a 5 s take renders in about 40 s on an RTX 5090, a 10 s one in about 80 s (longer on the first run). Always show the user the preview."
     ),
 )
@@ -157,6 +164,139 @@ async def refine_job(job_id: str, preset: str | None = None, seconds: int | None
 async def cancel_job(job_id: str) -> dict[str, Any]:
     """Cancel a queued or running job."""
     return _brief(await _req("POST", f"/api/jobs/{job_id}/cancel"))
+
+
+def _seq_brief(seq: dict[str, Any]) -> dict[str, Any]:
+    """Shots and transitions numbered from 1 in their CURRENT order; each take says whether it was made with the
+    sequence's current story. `updated_at` is the revision to pass to edit_sequence."""
+    out = {k: seq.get(k) for k in ("id", "status", "error", "story", "updated_at") if seq.get(k) is not None}
+    if seq.get("output_url"):
+        out["video_url"] = f"{BASE}{seq['output_url']}"
+    out["canvas"] = [seq.get("width"), seq.get("height")]
+    out["shots"] = [{"shot": i + 1, "file": s.get("first"), **({"clip": s["clip"]} if s.get("clip") else {})}
+                    for i, s in enumerate(seq.get("shots") or [])]
+    story = seq.get("story") or ""
+    out["segments"] = [{"segment": i + 1, "from_shot": i + 1, "to_shot": i + 2,
+                        **(_brief(t) if t else {"status": "missing"}),
+                        **({"prompt_extra": t["params"].get("prompt_extra") or "",
+                            "older_story": (t["params"].get("story") or "") != story} if t else {})}
+                       for i, t in enumerate(seq.get("takes") or [])]
+    return out
+
+
+@server.tool()
+async def create_sequence(shots: list[str], segments: list[dict[str, Any]], story: str = "") -> dict[str, Any]:
+    """Queue one longer video through several shots: shot 1 → shot 2 → … with a transition at each hand-off.
+
+    shots: 2-8 local file paths in order, images or short clips (1-6 s). A clip plays in full at its place; the
+    transition before it lands on its first frame and the one after it leaves from its last frame. segments: one
+    dict per hand-off (len(shots) - 1), each {"preset": id from list_presets, "seconds"?: one of its lengths,
+    "seed"?, "prompt_extra"?, "a_desc"?, "b_desc"?}. Every segment is checked before anything renders; each one is
+    an ordinary job (judge it with preview_job). Every take renders at the first shot's size (the sequence keeps
+    that canvas through later edits). story: optional, ≤300 chars, the idea of the whole film (who, where, mood),
+    shared context for every transition; per-transition direction goes in each segment's prompt_extra. Follow with
+    wait_sequence.
+    """
+    ups = await asyncio.gather(*[_upload(p, "mid") for p in shots])
+    body = {"shots": [{"clip": u["clip"], "first": u["first"], "last": u["last"]} if u.get("clip")
+                      else {"image": u["id"]} for u in ups], "segments": segments, "story": story}
+    return _seq_brief(await _req("POST", "/api/sequences", json=body))
+
+
+async def _grow_body(shot: str, preset: str, seconds: int, seed: int | None, prompt_extra: str) -> dict[str, Any]:
+    u = await _upload(shot, "mid")
+    return {"shot": {"clip": u["clip"], "first": u["first"], "last": u["last"]} if u.get("clip") else {"image": u["id"]},
+            "segment": {"preset": preset, "seconds": seconds, "seed": seed, "prompt_extra": prompt_extra}}
+
+
+@server.tool()
+async def extend_sequence(sequence_id: str, shot: str, preset: str, seconds: int = 5, seed: int | None = None,
+                          prompt_extra: str = "") -> dict[str, Any]:
+    """Add one more shot to the end of a finished sequence: only the transition into it renders (from the last
+    shot to this one), the other takes are reused and the video is joined again. shot: a local image or 1-6 s clip
+    path. Follow with wait_sequence, then preview_job on the new take before adding the next shot."""
+    body = await _grow_body(shot, preset, seconds, seed, prompt_extra)
+    return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/shots", json=body))
+
+
+@server.tool()
+async def continue_take(job_id: str, shot: str, preset: str, seconds: int = 5, seed: int | None = None,
+                        prompt_extra: str = "", story: str = "") -> dict[str, Any]:
+    """Start a story from a finished two-shot transition: it becomes the first transition of a new sequence
+    (nothing re-renders) and `shot` is added after it. Use extend_sequence for the shots after that. story: the
+    idea of the whole film, used by the new transition and every later one."""
+    body = {**await _grow_body(shot, preset, seconds, seed, prompt_extra), "story": story}
+    return _seq_brief(await _req("POST", f"/api/jobs/{job_id}/continue", json=body))
+
+
+@server.tool()
+async def edit_sequence(sequence_id: str, order: list[int], transitions: dict[str, dict[str, Any]] | None = None,
+                        story: str | None = None, expected_updated_at: float | None = None) -> dict[str, Any]:
+    """Edit a settled sequence like a storyboard, in one step. order: the CURRENT shot numbers (1-based, from
+    get_sequence) in their new order — leave a number out to remove that shot, permute to reorder (2-8 shots).
+    A transition whose two shots were already adjacent in that direction keeps its take; every other one is new and
+    needs an entry in `transitions`, keyed by its number in the NEW order ("1" = new shot 1 → new shot 2), each
+    {"preset", "seconds"?, "prompt_extra"?, "seed"?}; an entry for a kept transition makes a new take of it. Only new
+    transitions render; removing the first or last shot renders nothing and just joins again. story: omit to keep,
+    "" to clear; changing it re-renders nothing (takes made before keep theirs: older_story in the result; use
+    refine_segment on one to remake it with the new story). The canvas never changes. Pass the updated_at you read
+    as expected_updated_at so an edit never lands on a sequence that changed meanwhile. Tell the user how many
+    transitions will render before calling this. Follow with wait_sequence when anything renders."""
+    body = {"order": order, "transitions": transitions or {}, "story": story,
+            "expected_updated_at": expected_updated_at}
+    return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/edit", json=body))
+
+
+@server.tool()
+async def get_sequence(sequence_id: str) -> dict[str, Any]:
+    """Status of a sequence (running/assembling/succeeded/failed/cancelled) and of each segment's take."""
+    return _seq_brief(await _req("GET", f"/api/sequences/{sequence_id}"))
+
+
+@server.tool()
+async def wait_sequence(sequence_id: str, ctx: Context, timeout_s: int = 1800) -> dict[str, Any]:
+    """Block until every segment has rendered and the video is joined (or one failed, or timeout)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while True:
+        seq = await _req("GET", f"/api/sequences/{sequence_id}")
+        takes = [t for t in seq.get("takes") or [] if t]
+        done = sum(1.0 if t["status"] == "succeeded" else float(t.get("progress") or 0) for t in takes)
+        await ctx.report_progress(done, float(len(seq["segments"])))
+        if seq["status"] in SEQ_TERMINAL or loop.time() > deadline:
+            return _seq_brief(seq)
+        await asyncio.sleep(3)
+
+
+@server.tool()
+async def preview_sequence(sequence_id: str) -> Image:
+    """Contact sheet of a joined sequence: 6 frames per segment, in rows. Use preview_job on a segment's take to
+    judge its transition closely; this sheet is for the whole arc and the hand-offs."""
+    seq = await _req("GET", f"/api/sequences/{sequence_id}")
+    if seq["status"] != "succeeded" or not seq.get("sheet_url"):
+        raise RuntimeError(f"sequence {sequence_id} is {seq['status']}, no preview yet")
+    async with httpx.AsyncClient(base_url=BASE, timeout=60) as c:
+        r = await c.get(seq["sheet_url"])
+        r.raise_for_status()
+    return Image(data=r.content, format="png")
+
+
+@server.tool()
+async def refine_segment(sequence_id: str, segment: int, preset: str | None = None, seconds: int | None = None,
+                         prompt_extra: str | None = None, seed: int | None = None, a_desc: str | None = None,
+                         b_desc: str | None = None) -> dict[str, Any]:
+    """A new take of one segment (1-based) once the sequence has settled; the other takes are reused and the video
+    is joined again. Same rules as refine_job: unchanged fields are inherited, a fresh seed unless pinned. The new
+    take uses the sequence's current story."""
+    body = {"preset": preset, "seconds": seconds, "prompt_extra": prompt_extra, "seed": seed, "a_desc": a_desc,
+            "b_desc": b_desc}
+    return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/segments/{segment}/refine", json=body))
+
+
+@server.tool()
+async def cancel_sequence(sequence_id: str) -> dict[str, Any]:
+    """Cancel a sequence and its queued or running takes (finished takes are kept)."""
+    return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/cancel"))
 
 
 def main() -> None:

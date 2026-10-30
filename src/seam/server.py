@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import media, receipt
 from .config import PACKAGE_DIR, get_settings
-from .engine import Engine, TransitionRequest, store_clip, store_upload
+from .engine import Engine, SequenceBusy, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
 
 settings = get_settings()
@@ -31,6 +31,7 @@ MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 UPLOAD_ID = re.compile(r"^[0-9a-f]{16}\.png$")
 MAX_CLIP_BYTES = 40 * 1024 * 1024
 CLIP_ID = re.compile(r"^[0-9a-f]{16}\.mp4$")
+SEQ_ID = re.compile(r"^s[0-9a-f]{11}$")
 VIDEO_TYPES = ("video/mp4", "video/quicktime", "video/webm")
 engine: Engine | None = None
 
@@ -125,6 +126,80 @@ class RefineIn(BaseModel):
     b_ref: str | None = Field(default=None, max_length=120)
 
 
+class ShotIn(BaseModel):
+    """One shot of a sequence: an image upload id, or a clip (`first`/`last` from POST /api/uploads?role=mid)."""
+    image: str | None = Field(default=None, description="image upload id")
+    first: str | None = Field(default=None, description="clip's first-frame upload id (role=mid)")
+    last: str | None = Field(default=None, description="clip's last-frame upload id (role=mid)")
+    clip: str | None = Field(default=None, description="clip id: plays in full at this point of the sequence")
+
+
+class SegmentIn(BaseModel):
+    """The transition from one shot to the next: same fields as a transition, minus the shots."""
+    preset: str
+    seconds: int = 5
+    seed: int | None = None
+    prompt_extra: str = Field(default="", max_length=600)
+    a_desc: str | None = Field(default=None, max_length=400)
+    b_desc: str | None = Field(default=None, max_length=400)
+    a_ref: str | None = Field(default=None, max_length=120)
+    b_ref: str | None = Field(default=None, max_length=120)
+
+
+class GrowIn(BaseModel):
+    """One more shot and the transition into it."""
+    shot: ShotIn
+    segment: SegmentIn
+    story: str = Field(default="", max_length=300, description="the idea of the whole sequence, shared by every transition")  # continue only: the new sequence's story
+
+
+class SequenceIn(BaseModel):
+    shots: list[ShotIn] = Field(min_length=2, max_length=8)
+    segments: list[SegmentIn] = Field(description="one per hand-off: len(shots) - 1")
+    story: str = Field(default="", max_length=300, description="the idea of the whole sequence, shared by every transition")
+
+
+class EditIn(BaseModel):
+    """Remove / reorder shots and set the story in one step. Shots and transitions are numbered from 1."""
+    order: list[int] = Field(min_length=2, max_length=8, description="current shot numbers in their new order; "
+                             "leave one out to remove it")
+    transitions: dict[int, SegmentIn] = Field(default_factory=dict, description="transition number in the NEW order "
+                                              "→ its effect; required for every hand-off whose shots were not already "
+                                              "adjacent in that direction, optional (a new take) for the others")
+    story: str | None = Field(default=None, max_length=300, description="omit to keep; '' clears it")
+    expected_updated_at: float | None = Field(default=None, description="the sequence's updated_at you edited; a "
+                                              "newer sequence answers 409")
+
+
+def _shot_paths(shot: ShotIn) -> dict[str, str | None]:
+    if shot.clip:
+        if not (shot.first and shot.last):
+            raise HTTPException(422, "a clip shot needs first and last (upload it with role=mid)")
+        return {"first": str(_upload_path(shot.first)), "last": str(_upload_path(shot.last)),
+                "clip": _clip_path(shot.clip)}
+    image = shot.image or shot.first or shot.last
+    if not image:
+        raise HTTPException(422, "each shot needs an image or a clip")
+    path = str(_upload_path(image))
+    return {"first": path, "last": path, "clip": None}
+
+
+def _seq_out(seq: Any, jobs: bool = True) -> dict[str, Any]:
+    """One sequence shape for REST and live events: file names and URLs only, plus its current takes."""
+    d = seq if isinstance(seq, dict) else seq.public()
+    d["shots"] = [{"first": Path(s["first"]).name, "last": Path(s["last"]).name,
+                   "first_url": f"/uploads/{Path(s['first']).name}", "last_url": f"/uploads/{Path(s['last']).name}",
+                   **({"clip": Path(s["clip"]).name, "clip_url": f"/uploads/{Path(s['clip']).name}"}
+                      if s.get("clip") else {})} for s in d["shots"]]
+    for k in ("output", "poster", "sheet"):
+        if d.get(k):
+            d[f"{k}_url"] = f"/outputs/{d[k]}"
+    if jobs:
+        store = _engine().store
+        d["takes"] = [_job_out(j) if (j := store.get(i)) else None for i in d["segments"]]
+    return d
+
+
 def _job_out(job: Any) -> dict[str, Any]:
     """One job shape for REST and live events (the web app replaces its copy with whichever arrives)."""
     d = job if isinstance(job, dict) else job.public()
@@ -212,8 +287,8 @@ async def upload(file: UploadFile = File(...), role: str = "a") -> dict[str, Any
 
 
 async def _upload_clip(file: UploadFile, role: str) -> dict[str, Any]:
-    if role not in ("a", "b"):
-        raise HTTPException(400, "role must be a or b")
+    if role not in ("a", "b", "mid"):
+        raise HTTPException(400, "role must be a, b or mid")
     data = await file.read(MAX_CLIP_BYTES + 1)
     if len(data) > MAX_CLIP_BYTES:
         raise HTTPException(413, "clip larger than 40 MB")
@@ -222,15 +297,22 @@ async def _upload_clip(file: UploadFile, role: str) -> dict[str, Any]:
         src.write_bytes(data)
         try:
             clip, seconds = await asyncio.to_thread(store_clip, settings, src)
-            frame = await asyncio.to_thread(media.clip_frame, clip, Path(tmp) / "frame.png", role == "a")
-            stored = store_upload(settings, frame)
+            ends = {}
+            for end in (("first", "last") if role == "mid" else ("last",) if role == "a" else ("first",)):
+                frame = await asyncio.to_thread(media.clip_frame, clip, Path(tmp) / f"{end}.png", end == "last")
+                ends[end] = store_upload(settings, frame)
+            stored = ends.get("last") or ends["first"]  # a: the frame the transition leaves from; b: lands on
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         except Exception as e:  # noqa: BLE001
             raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
     w, h = media.image_size(stored)
-    return {"id": stored.name, "url": f"/uploads/{stored.name}", "width": w, "height": h,
-            "clip": clip.name, "clip_url": f"/uploads/{clip.name}", "clip_seconds": round(seconds, 2)}
+    out = {"id": stored.name, "url": f"/uploads/{stored.name}", "width": w, "height": h,
+           "clip": clip.name, "clip_url": f"/uploads/{clip.name}", "clip_seconds": round(seconds, 2)}
+    if role == "mid":  # a clip in the middle of a sequence: landed on at its first frame, left from its last
+        out.update(first=ends["first"].name, first_url=f"/uploads/{ends['first'].name}",
+                   last=ends["last"].name, last_url=f"/uploads/{ends['last'].name}")
+    return out
 
 
 @app.post("/api/transitions", status_code=201)
@@ -347,6 +429,111 @@ def refine_job(job_id: str, body: RefineIn) -> dict[str, Any]:
         raise HTTPException(422, str(e)) from e
 
 
+def _sequence(seq_id: str):
+    if not SEQ_ID.match(seq_id):
+        raise HTTPException(400, "invalid sequence id")
+    seq = _engine().store.get_sequence(seq_id)
+    if seq is None:
+        raise HTTPException(404, "sequence not found")
+    return seq
+
+
+@app.post("/api/sequences", status_code=201)
+def create_sequence(body: SequenceIn) -> dict[str, Any]:
+    """Shots S0..Sn joined by n transitions, one per hand-off; the result is one video (clips play in full)."""
+    shots = [_shot_paths(s) for s in body.shots]
+    try:
+        return _seq_out(_engine().create_sequence(shots, [s.model_dump() for s in body.segments], body.story))
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.get("/api/sequences")
+def list_sequences(limit: int = 20) -> list[dict[str, Any]]:
+    return [_seq_out(s) for s in _engine().store.list_sequences(limit=min(limit, 100))]
+
+
+@app.get("/api/sequences/{seq_id}")
+def get_sequence(seq_id: str) -> dict[str, Any]:
+    return _seq_out(_sequence(seq_id))
+
+
+@app.post("/api/sequences/{seq_id}/segments/{index}/refine", status_code=201)
+def refine_segment(seq_id: str, index: int, body: RefineIn) -> dict[str, Any]:
+    """A new take of segment `index` (1-based); the other takes are reused and the sequence joins again."""
+    _sequence(seq_id)
+    try:
+        return _seq_out(_engine().refine_segment(seq_id, index - 1, body.model_dump()))
+    except SequenceBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.post("/api/sequences/{seq_id}/edit")
+def edit_sequence(seq_id: str, body: EditIn) -> dict[str, Any]:
+    """Remove and reorder shots and set the story. Hand-offs that stay adjacent keep their takes; only new ones render."""
+    _sequence(seq_id)
+    try:
+        return _seq_out(_engine().edit_sequence(
+            seq_id, [i - 1 for i in body.order], {k - 1: v.model_dump() for k, v in body.transitions.items()},
+            body.story, body.expected_updated_at))
+    except SequenceBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.post("/api/sequences/{seq_id}/shots", status_code=201)
+def append_shot(seq_id: str, body: GrowIn) -> dict[str, Any]:
+    """Grow a finished sequence by one shot: only the new transition renders, then the video joins again."""
+    _sequence(seq_id)
+    shot = _shot_paths(body.shot)
+    try:
+        return _seq_out(_engine().append_shot(seq_id, shot, body.segment.model_dump()))
+    except SequenceBusy as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.post("/api/jobs/{job_id}/continue", status_code=201)
+def continue_take(job_id: str, body: GrowIn) -> dict[str, Any]:
+    """Turn a finished two-shot take into a sequence (that take is its first transition) and add the next shot."""
+    shot = _shot_paths(body.shot)
+    try:
+        return _seq_out(_engine().continue_take(job_id, shot, body.segment.model_dump(), body.story))
+    except KeyError as e:
+        raise HTTPException(404, "job not found") from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.post("/api/sequences/{seq_id}/cancel")
+def cancel_sequence(seq_id: str) -> dict[str, Any]:
+    _sequence(seq_id)
+    return _seq_out(_engine().cancel_sequence(seq_id))
+
+
+@app.post("/api/sequences/{seq_id}/assemble")
+def assemble_sequence(seq_id: str) -> dict[str, Any]:
+    """Join again from the current takes (after a failed join)."""
+    _sequence(seq_id)
+    try:
+        return _seq_out(_engine().assemble(seq_id))
+    except SequenceBusy as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.get("/api/sequences/{seq_id}/receipt")
+def sequence_receipt(seq_id: str) -> dict[str, Any]:
+    """The ordered join: clips by sha256 and each take with its own receipt (each take's graph is in its bundle)."""
+    seq = _sequence(seq_id)
+    if seq.status != "succeeded":
+        raise HTTPException(409, f"sequence {seq_id} is {seq.status}")
+    return _engine().sequence_receipt(seq_id)
+
+
 @app.get("/api/events")
 async def events() -> StreamingResponse:
     store = _engine().store
@@ -357,8 +544,9 @@ async def events() -> StreamingResponse:
             yield "retry: 3000\n\n"
             while True:
                 try:
-                    item = _job_out(await asyncio.to_thread(q.get, True, 15))
-                    yield f"event: job\ndata: {json.dumps(item)}\n\n"
+                    kind, item = await asyncio.to_thread(q.get, True, 15)
+                    item = _seq_out(item, jobs=False) if kind == "sequence" else _job_out(item)
+                    yield f"event: {kind}\ndata: {json.dumps(item)}\n\n"
                 except Exception:  # queue.Empty → keep-alive
                     yield ": ping\n\n"
         finally:

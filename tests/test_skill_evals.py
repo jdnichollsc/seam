@@ -13,7 +13,7 @@ PRESETS = ROOT / "src" / "seam" / "presets" / "presets.yaml"
 
 # Effects the skill must treat as unavailable; cases may mention them on purpose.
 INTENTIONALLY_UNLISTED = {"fire"}
-ANCHORS = ["seam_status", "list_presets", "prompt_extra", "row 2", "middle", "give it a listen", "different preset"]
+ANCHORS = ["seam_status", "list_presets", "prompt_extra", "row 2", "middle", "give it a listen", "different preset", "create_sequence", "refine_segment"]
 
 
 def _cases() -> list[dict]:

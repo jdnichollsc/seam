@@ -106,5 +106,23 @@
   "file": "p6_b.png",
   "job_id": "77b0ad86-c2d6-4789-a44c-bf69b0afba75",
   "model": "z_image_turbo_bf16"
+ },
+ "p6_c": {
+  "w": 1280,
+  "h": 720,
+  "seed": 603,
+  "text": "Product shot of the same square glass perfume bottle with a gold cap on wet sand at sunrise, gentle waves behind, warm golden light, centered, shallow depth of field, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p6_c.png",
+  "job_id": "35cab038-e816-4702-9574-45b14004ff3e",
+  "model": "z_image_turbo_bf16"
+ },
+ "p6_d": {
+  "w": 1280,
+  "h": 720,
+  "seed": 604,
+  "text": "Product shot of the same square glass perfume bottle with a gold cap on green moss in a misty forest, soft diffused light, centered, shallow depth of field, photorealistic, 35mm film still, natural skin texture, sharp focus, cinematic color grade",
+  "file": "p6_d.png",
+  "job_id": "3d6728d2-d229-431b-af60-80b2c1def91e",
+  "model": "z_image_turbo_bf16"
  }
 }

@@ -95,3 +95,15 @@ User verdict on p4 and p5 (2026-10-21): both look good.
   spin_wipe (repeated animation / returns to A).
 - Known limitations for docs/demo: smoke's push-in can leave a still subject frozen before coverage (p3; the prompt asks for no
   subject action); Seam keeps whatever is in the two photos — if the object differs between A and B, so will the clip (p6).
+
+## Sequence mode (GPU rounds 2026-10-29, LTX-2.5 + enhancer, hard-cut joins)
+| Clip | What | User verdict (2026-10-30) |
+|---|---|---|
+| seq/a_stills | 3 stills: sneaker → smoke → bicycle → whip pan → cup (1280×704, 10.1 s) | good |
+| seq/b_midclip | still → 5 s clip → still, mixed aspect, water bend + light burst (704×1280, 15.1 s) | good |
+| seq/a_stills_reroll1 | new take of transition 1 only, transition 2 reused | good |
+| grow/step2_3shots | two-shot take (smoke) → continue with a new shot (light burst), p6_c | good |
+| grow/step3_4shots | add shot 4 (ink), p6_d; only the new transition rendered | good |
+
+**DECISION:** sequence mode (2–8 shots, continue a take, add a shot, storyboard edit) ships. Takes are reused only when
+their exact pair of shots stays adjacent; known limitation: a slight brightness/sharpness step can show at a hard cut.

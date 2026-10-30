@@ -77,6 +77,7 @@ def build_receipt(job: JobRecord, spec: WorkflowSpec, outputs_dir: Path) -> dict
         "inputs": {"image_a": {"file": a.name, "sha256": sha256(a)}, "image_b": {"file": b.name, "sha256": sha256(b)}},
         "shots": {"a_desc": p.get("a_desc"), "b_desc": p.get("b_desc"), "a_ref": p.get("a_ref"), "b_ref": p.get("b_ref")},
         "prompt_extra": p.get("prompt_extra") or "",
+        "story": p.get("story") or "",  # the sequence's story line when this take was made
         "prompt_sent": x.get("prompt"),  # what Seam sent; with the enhancer on, the graph rewrites it before encoding
         "prompt_enhancer": bool(p.get("enhance", True)) and "enhance_prompt" in spec.slots,
         "workflow": {"file": sub["workflow"], "sha256": sub["workflow_sha256"],

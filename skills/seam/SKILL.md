@@ -1,6 +1,6 @@
 ---
 name: seam
-description: Make a short video that transitions from one image to another with an effect (smoke, water bend, whip pan, …), rendered locally on ComfyUI with open-weights LTX models through the Seam MCP server. Use when the user wants a transition, a "before/after" or outfit/location change clip, or wants to join two shots with an effect.
+description: Make a short video that transitions from one image to another with an effect (smoke, water bend, whip pan, …), rendered locally on ComfyUI with open-weights LTX models through the Seam MCP server. Use when the user wants a transition, a "before/after" or outfit/location change clip, wants to join two shots with an effect, or wants one longer video through a sequence of shots (a story, a lookbook, a product tour).
 ---
 
 # Seam — AI transitions between two shots
@@ -48,6 +48,39 @@ renders at a time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the fir
 6. To iterate, use `refine_job(job_id, …)`: a different `preset`, extra direction in `prompt_extra`
    ("slower", "keep her face sharp", "warmer light"), or a pinned `seed` to keep the same take. Each refinement
    is a new job linked to its parent, so the user's gallery keeps the history.
+
+## Sequences — one video through several shots
+
+When the user has more than two shots (a lookbook, a trip, a product tour, a short story), make a sequence instead of
+separate transitions: shot 1 → shot 2 → … with one transition at each hand-off, joined into one video.
+
+1. Agree on the **order** of the shots with the user (2-8; images or 1-6 s clips — a clip plays in full at its
+   place). Every take renders at the first shot's size, and the sequence keeps that canvas even if the shots are
+   reordered later, so put the shot with the framing they want first and say when another shot has a very different
+   aspect (it gets centre-cropped). If the user has an idea for the whole film (who, where, mood), pass it as
+   `story` (≤300 chars); each transition's own direction stays in its `prompt_extra`.
+2. Pick an effect **per hand-off** (the same routing as above); varying effects reads better than one repeated, but
+   follow the user. `seconds` per hand-off as for a single take.
+3. `create_sequence(shots, segments, story?)` — `segments` has one entry per hand-off: `{"preset": …,
+   "seconds"?, "seed"?, "prompt_extra"?}`. Then `wait_sequence`.
+4. Judge **each segment** with `preview_job(take id)` exactly like a single transition (row 2, the middle), then the
+   whole arc with `preview_sequence` (hand-offs: does each take land on the shot the next one leaves from?).
+5. Re-roll only the segment that fails with `refine_segment(sequence_id, segment, …)` — the other takes are reused
+   and the video is joined again. Give the user the sequence's video URL.
+6. **Grow a story shot by shot.** From a finished two-shot transition, `continue_take(job_id, next_shot, preset)`
+   makes it the first transition of a sequence; after that, `extend_sequence(sequence_id, next_shot, preset)` adds
+   one shot at a time. Only the new transition renders. Show the user each new take (`preview_job`) before adding
+   the next shot. Each transition starts from the user's own shot, so the story stays as consistent as the shots the
+   user brings: suggest shots of the same subject, look and light, and put a shared direction in `story`.
+7. **Edit it like a storyboard.** `edit_sequence(sequence_id, order, transitions?, story?, expected_updated_at)`
+   does removes, reorders and the story in one call. `order` lists the current shot numbers (from `get_sequence`)
+   in the new order; leave one out to remove it. A transition whose two shots were already adjacent in that
+   direction keeps its take; every other one is new, renders, and needs an effect in `transitions` (keyed by its
+   number in the NEW order). Before calling, tell the user which transitions will render and which are reused, and
+   pass the `updated_at` you read. Removing the first or last shot renders nothing (the video just joins again).
+   Never rebuild the whole sequence to change one part: a different effect or direction for one transition is
+   `refine_segment`; a new story re-renders nothing — takes made before it show `older_story`, and remaking one
+   with the new story is `refine_segment` on it, only when the user asks.
 
 ## Judge a result like an editor
 

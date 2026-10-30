@@ -31,7 +31,12 @@ model runs on your machine and every take can be reopened, inspected and re-run 
 
 - **Web studio**: shots on the left, the take on the right, your gallery below. Images, 1–6 s clips or **3D models**
   as input, ten qualified effects (5 s takes, 10 s for Smoke, Water bend and Whip pan) or **Surprise me**, and three examples so you can try it in one click.
-- **CLI**: `seam make first.png last.png --preset smoke`.
+- **Sequences**: more than two shots? Put them in order, pick an effect per hand-off, and Seam renders each
+  transition and joins them into one video (clips play in full at their place). A bad hand-off gets a new take on
+  its own; the others are reused. Or grow a story shot by shot: **Continue** a finished two-shot take with a new
+  shot, then keep adding; only the new transition renders, and every transition starts from your own shot, so the
+  story stays as consistent as the shots you bring.
+- **CLI**: `seam make first.png last.png --preset smoke`, `seam sequence make 1.png 2.png 3.png --preset smoke,whip_pan`, then `seam sequence extend <id> 4.png --preset ink`, and `seam sequence edit <id> --order 1,3,2,4 --transition 1=ink --transition 2=melt --transition 3=smoke` to reorder (only the new hand-offs render).
 - **Agent plugin**: a skill + MCP server so Claude Code (or any MCP agent) can plan, render, review and refine
   transitions for you. Packaged as a Claude Code plugin and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin.
 
@@ -151,7 +156,9 @@ claude plugin install seam
 
 Then ask for a transition ("make a smoke transition from a.png to b.png and show me a preview"). The MCP server
 exposes `seam_status`, `list_presets`, `create_transition`, `wait_job`, `preview_job`, `refine_job`, `get_job`,
-`list_jobs` and `cancel_job`; the skill tells the agent how to plan shots, judge a take and refine it.
+`list_jobs` and `cancel_job`, plus `create_sequence`, `wait_sequence`, `get_sequence`, `preview_sequence`,
+`refine_segment`, `cancel_sequence`, `continue_take`, `extend_sequence` and `edit_sequence` (remove / reorder
+shots, a story line for the whole film) for multi-shot videos; the skill tells the agent how to plan shots, judge a take and refine it.
 
 ## How it works
 

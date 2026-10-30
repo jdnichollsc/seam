@@ -212,3 +212,25 @@ presets:
     path: "{a} crumbles into soil and stones that surge across the ground as a rolling wave of earth, which rises and settles into {b}."
     camera: low-angle tracking shot
     sound: rumbling earth and tumbling rocks
+  # Higgsfield-list gaps (10/29): original text, candidates until qualified on played clips
+  - id: logo_reveal
+    name: Logo to Life
+    status: candidate
+    category: vfx
+    path: "The flat graphic in {a} lifts off the background in three dimensions; its shapes and colors unfold and rebuild, growing into {b}."
+    camera: static camera, slight push-in
+    sound: a crisp pop and a bright shimmer
+  - id: portal_hole
+    name: Through the Hole
+    status: candidate
+    category: camera
+    path: "A round opening appears in the middle of {a} and widens; the camera flies straight through it and comes out into {b}."
+    camera: steady push forward through the opening
+    sound: a hollow rushing whoosh
+  - id: screen_dive
+    name: Into the Screen
+    status: candidate
+    category: camera
+    path: "The camera pushes toward a glowing screen in {a} that already shows {b}; it moves into the screen until {b} fills the whole frame."
+    camera: smooth push-in into the screen
+    sound: a soft electronic hum rising into a swoosh

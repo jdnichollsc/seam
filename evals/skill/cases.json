@@ -54,5 +54,19 @@
     "situation": "preview_job gives a contact sheet and a video URL. The agent has no way to listen to the audio track.",
     "must": ["(?i)give it a listen", "(?i)(cannot|can't|can not|unable to) hear"],
     "must_not": ["(?i)sounds (great|good|perfect)", "(?i)the audio (is|sounds) (great|good|fine)"]
+  },
+  {
+    "id": "sequence_of_shots",
+    "user_request": "I have four photos of my trip (1.png, 2.png, 3.png, 4.png). Make one video that goes through all of them, and redo the second transition if it looks off.",
+    "situation": "Tools are up. list_presets returns `smoke`, `water_bend`, `whip_pan`, `ink`. The sequence rendered; preview_job on segment 2's take shows a hard cut before the smoke covers the frame.",
+    "must": ["(?i)create_sequence", "(?i)preview_job", "(?i)refine_segment"],
+    "must_not": ["(?i)refine_segment\\([^)]*segment\\W*[=:]?\\W*[134]\\b"]
+  },
+  {
+    "id": "storyboard_edit",
+    "user_request": "In my 4-shot sequence s1a2b3c4d5e6, drop the third photo and swap the first two. Keep it about one summer day at the beach.",
+    "situation": "Tools are up. get_sequence returns 4 shots, 3 succeeded takes, story '', updated_at 1761800000.5. list_presets returns `smoke`, `water_bend`, `whip_pan`, `ink`.",
+    "must": ["(?i)edit_sequence", "(?i)order\\W*[=:]?\\W*\\[\\s*2\\s*,\\s*1\\s*,\\s*4\\s*\\]", "(?i)story", "(?i)expected_updated_at"],
+    "must_not": ["(?i)create_sequence"]
   }
 ]

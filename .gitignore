@@ -10,6 +10,7 @@ wheels/
 # Web
 web/node_modules/
 src/seam/static/web/
+.env
 
 # Dev/research work stays local: only the qualification record and the test images are published
 research/
@@ -19,6 +20,7 @@ dev/*
 dev/fixtures/*
 !dev/fixtures/fixtures.json
 !dev/fixtures/p[1-6]_[ab].png
+!dev/fixtures/p6_[cd].png
 
 # Local runtime data (default lives in ~/.seam, this covers in-repo overrides)
 .seam/

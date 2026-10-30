@@ -80,14 +80,15 @@ def frame_at(video: Path, t: float, height: int | None = None) -> Image.Image:
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
 
-def contact_sheet(video: Path, dst: Path, n: int = 8, height: int = 220) -> Path:
+def contact_sheet(video: Path, dst: Path, n: int = 8, height: int = 220, cols: int | None = None) -> Path:
+    """n frames across the whole video, in rows of `cols` (default: one row)."""
     info = probe(video)
     frames = [frame_at(video, min(info.duration * i / (n - 1), info.duration - 0.05), height) for i in range(n)]
-    sheet = Image.new("RGB", (sum(f.width for f in frames), height))
-    x = 0
-    for f in frames:
-        sheet.paste(f, (x, 0))
-        x += f.width
+    cols = cols or n
+    w = frames[0].width
+    sheet = Image.new("RGB", (w * cols, height * -(-n // cols)))
+    for i, f in enumerate(frames):
+        sheet.paste(f, ((i % cols) * w, (i // cols) * height))
     sheet.save(dst)
     return dst
 
@@ -146,19 +147,24 @@ def clip_frame(video: Path, dst: Path, last: bool) -> Path:
 
 
 def merge_clips(transition: Path, dst: Path, clip_a: Path | None = None, clip_b: Path | None = None) -> Path:
-    """clip A + transition + clip B as one video at the transition's size and frame rate. Clips are scaled to
-    cover and centre-cropped (aspect follows the transition, which follows A); a clip without sound gets silence."""
-    _ensure_ffmpeg()
+    """clip A + transition + clip B as one video at the transition's size and frame rate (aspect follows the
+    transition, which follows A)."""
     t = probe(transition)
-    parts = [p for p in (clip_a, transition, clip_b) if p is not None]
+    return join([p for p in (clip_a, transition, clip_b) if p is not None], dst, t.width, t.height, t.fps)
+
+
+def join(parts: list[Path], dst: Path, width: int, height: int, fps: float) -> Path:
+    """Hard-cut concat of clips and transitions, in order, at one size and frame rate: every part keeps all its
+    frames, is scaled to cover and centre-cropped; a part without sound gets silence."""
+    _ensure_ffmpeg()
     inputs: list[str] = []
     chains: list[str] = []
     for i, p in enumerate(parts):
         inputs += ["-i", str(p)]
         info = probe(p)
         # every segment is cut to its picture's length and restarts at t=0, so sound and picture stay together
-        chains.append(f"[{i}:v]trim=duration={info.duration:.3f},setpts=PTS-STARTPTS,scale={t.width}:{t.height}:"
-                      f"force_original_aspect_ratio=increase,crop={t.width}:{t.height},setsar=1,fps={t.fps:g},"
+        chains.append(f"[{i}:v]trim=duration={info.duration:.3f},setpts=PTS-STARTPTS,scale={width}:{height}:"
+                      f"force_original_aspect_ratio=increase,crop={width}:{height},setsar=1,fps={fps:g},"
                       f"format=yuv420p[v{i}]")
         src = (f"[{i}:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo,apad" if info.has_audio
                else "anullsrc=r=48000:cl=stereo")
@@ -168,7 +174,7 @@ def merge_clips(transition: Path, dst: Path, clip_a: Path | None = None, clip_b:
     tmp = dst.with_name(dst.stem + ".tmp.mp4")
     subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", graph, "-map", "[v]", "-map", "[a]",
                     "-c:v", "libx264", "-crf", "18", "-preset", "veryfast", "-c:a", "aac",
-                    "-movflags", "+faststart", str(tmp)], check=True, capture_output=True, timeout=300)
+                    "-movflags", "+faststart", str(tmp)], check=True, capture_output=True, timeout=120 + 60 * len(parts))
     tmp.replace(dst)
     return dst
 
