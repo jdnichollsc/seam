@@ -34,6 +34,13 @@ CLOUD_GRACE_S = 30.0
 SEQ = "seq:"  # worker queue items for sequences (reconcile/join), next to plain job ids
 
 
+TRASH_DAYS = 7  # how long the trash keeps a take or a sequence before its files go
+
+
+class TakeInUse(ValueError):
+    """A sequence still joins this take: it leaves through the sequence's storyboard."""
+
+
 class SequenceBusy(ValueError):
     """The sequence is still rendering or joining: edits wait until it settles."""
 
@@ -75,12 +82,14 @@ class Engine:
         self._queue: queue.Queue[str] = queue.Queue()
         self._handles: dict[str, Any] = {}
         self._seq_lock = threading.Lock()  # sequence pointer swaps vs the worker's reconcile
+        self._writing: set[str] = set()  # worker: the take or join whose files are being written, even if cancelled
         self._submit_lock = threading.Lock()  # cancel vs submit: a cancelled take never reaches the GPU
         self._worker = threading.Thread(target=self._run, daemon=True, name="seam-engine")
 
     # -- lifecycle ------------------------------------------------------------------------------
     def start(self) -> None:
         self.settings.ensure_dirs()
+        self.purge_trash()
         for job in self.store.list(limit=10_000):
             if job.status in ("queued", "running"):
                 if job.comfy_job_id:  # re-attach instead of resubmitting
@@ -185,6 +194,8 @@ class Engine:
         base = self.store.get(job_id)
         if base is None:
             raise KeyError(job_id)
+        if base.deleted_at:
+            raise ValueError(f"take {job_id} is in the trash; restore it first")
         params = {**base.params, **{k: v for k, v in changes.items() if v is not None}}
         old = self.presets.get(base.params.get("preset"))
         picked = old is not None and base.params.get("model") not in (None, "", old.model or self.settings.model)
@@ -260,7 +271,7 @@ class Engine:
         """A new take of one segment (same rules as refine); the others are reused and the sequence joins again."""
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
-            if seq is None:
+            if seq is None or seq.deleted_at:
                 raise KeyError(seq_id)
             if seq.status in ("running", "assembling"):
                 raise SequenceBusy(f"sequence {seq_id} is {seq.status}; re-roll a segment once it settles")
@@ -283,7 +294,7 @@ class Engine:
         video joins again. The new take starts from the last shot (its still, or its clip's last frame)."""
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
-            if seq is None:
+            if seq is None or seq.deleted_at:
                 raise KeyError(seq_id)
             job = self._append_locked(seq, shot, segment)
         self._queue.put(job.id)
@@ -298,6 +309,8 @@ class Engine:
             raise KeyError(job_id)
         if job.status != "succeeded" or not job.output or not (self.settings.outputs_dir / job.output).is_file():
             raise ValueError(f"take {job_id} is {job.status}; continue from a finished take")
+        if job.deleted_at:
+            raise ValueError(f"take {job_id} is in the trash; restore it first")
         p = job.params
         last_b = p["image_b"]
         if p.get("clip_b"):  # the take landed on clip B's first frame; the next one leaves from its last frame
@@ -318,8 +331,10 @@ class Engine:
         width, height = info.width - info.width % 32, info.height - info.height % 32
         self.validate(self._next_request(shots[-1]["last"], shot, segment, width, height))
         with self._seq_lock:
+            if self.store.get(job_id).deleted_at:  # trashed while the files above were being read
+                raise ValueError(f"take {job_id} is in the trash; restore it first")
             seq = self.store.create_sequence(shots, [job.id], width, height, story.strip())
-            seq = self.store.update_sequence(seq.id, status="succeeded")  # one finished take: nothing to wait for
+            seq = self.store.update_sequence(seq.id, status="succeeded", origin=job.id)  # one finished take: nothing to wait for
             try:
                 new = self._append_locked(seq, shot, segment)
             except Exception:
@@ -382,7 +397,7 @@ class Engine:
         new_jobs: list[JobRecord] = []
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
-            if seq is None:
+            if seq is None or seq.deleted_at:
                 raise KeyError(seq_id)
             if seq.status in ("running", "assembling"):
                 raise SequenceBusy(f"sequence {seq_id} is {seq.status}; edit it once it settles")
@@ -465,7 +480,7 @@ class Engine:
     def cancel_sequence(self, seq_id: str) -> SequenceRecord:
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
-            if seq is None:
+            if seq is None or seq.deleted_at:
                 raise KeyError(seq_id)
             if seq.status in ("succeeded", "failed", "cancelled"):
                 return seq
@@ -480,7 +495,7 @@ class Engine:
         """Join again from the segments' existing outputs (after a failed join or a cancel)."""
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
-            if seq is None:
+            if seq is None or seq.deleted_at:
                 raise KeyError(seq_id)
             if seq.status in ("running", "assembling"):
                 raise SequenceBusy(f"sequence {seq_id} is {seq.status}")
@@ -492,7 +507,7 @@ class Engine:
         """Worker only: derive the sequence's status from its current segments; join once all of them succeeded."""
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
-            if seq is None or seq.status == "cancelled":
+            if seq is None or seq.deleted_at or seq.status == "cancelled":
                 return
             jobs = [self.store.get(j) for j in seq.segments]
             status = [j.status if j else "failed" for j in jobs]
@@ -510,6 +525,7 @@ class Engine:
                 self.store.update_sequence(seq_id, status="succeeded", error=None)
                 return
             seq = self.store.update_sequence(seq_id, status="assembling")
+            self._writing.add(seq_id)
         out_dir = self.settings.outputs_dir
         dst = out_dir / name
         try:
@@ -532,12 +548,125 @@ class Engine:
                     self.store.update_sequence(seq_id, status="failed", error=(
                         f"could not join the takes ({type(e).__name__}); the server log has the details. "
                         "Join again, or make a new take of a segment"))
+                self._writing.discard(seq_id)
             return
         with self._seq_lock:
+            self._writing.discard(seq_id)
             cur = self.store.get_sequence(seq_id)
             if cur and cur.status == "assembling" and cur.segments == seq.segments:  # not cancelled meanwhile
                 self.store.update_sequence(seq_id, status="succeeded", output=name, poster=f"{dst.stem}.jpg",
                                            sheet=f"{dst.stem}_sheet.png", error=None)
+
+    # -- trash, stars, recipes -------------------------------------------------------------------
+    def trash_job(self, job_id: str) -> JobRecord:
+        """Into the trash, nothing leaves the disk yet. A take a sequence joins is removed through that sequence."""
+        with self._seq_lock:
+            job = self.store.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job.deleted_at:
+                return job
+            if job.status in ("queued", "running"):
+                raise SequenceBusy(f"take {job_id} is {job.status}; cancel it first")
+            if any(job_id in s.segments for s in self.store.list_sequences(limit=-1)):
+                raise TakeInUse(f"a sequence uses take {job_id}; remove it from the storyboard or trash the sequence")
+            return self.store.update(job_id, deleted_at=time.time())
+
+    def trash_sequence(self, seq_id: str) -> SequenceRecord:
+        """The sequence and its takes, past and present, except starred ones and those another sequence joins."""
+        with self._seq_lock:
+            seq = self.store.get_sequence(seq_id)
+            if seq is None:
+                raise KeyError(seq_id)
+            if seq.deleted_at:
+                return seq
+            if seq.status in ("running", "assembling"):
+                raise SequenceBusy(f"sequence {seq_id} is {seq.status}; cancel it first")
+            live = self.store.list(limit=-1)
+            own = [j for j in live if j.id in seq.segments or j.id == seq.origin or j.extra.get("sequence_id") == seq_id]
+            if any(j.status in ("queued", "running") for j in own):
+                raise SequenceBusy(f"sequence {seq_id} still has a take rendering; cancel it first")
+            shared = {i for s in self.store.list_sequences(limit=-1) if s.id != seq_id for i in s.segments}
+            now = time.time()
+            for j in own:
+                if not j.starred and j.id not in shared:
+                    self.store.update(j.id, deleted_at=now, extra={**j.extra, "trashed_with": seq_id})
+            return self.store.update_sequence(seq_id, deleted_at=now)
+
+    def restore_job(self, job_id: str) -> JobRecord:
+        with self._seq_lock:
+            job = self.store.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            return self._restored(job)
+
+    def _restored(self, job: JobRecord) -> JobRecord:
+        extra = {k: v for k, v in job.extra.items() if k != "trashed_with"}
+        return self.store.update(job.id, deleted_at=None, extra=extra)
+
+    def restore_sequence(self, seq_id: str) -> SequenceRecord:
+        with self._seq_lock:
+            seq = self.store.get_sequence(seq_id)
+            if seq is None:
+                raise KeyError(seq_id)
+            for j in self.store.list(limit=-1, trashed=True):
+                if j.id in seq.segments or j.extra.get("trashed_with") == seq_id:
+                    self._restored(j)
+            return self.store.update_sequence(seq_id, deleted_at=None)
+
+    def _remove_files(self, record_id: str) -> bool:
+        """Every file named after a take or sequence (ids are ours). False when one is still open somewhere."""
+        out = self.settings.outputs_dir
+        done = True
+        for path in [*out.glob(f"{record_id}.*"), *out.glob(f"{record_id}_*")]:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                done = False
+        return done
+
+    def purge_trash(self, everything: bool = False) -> dict[str, int]:
+        """Remove what the trash has held for TRASH_DAYS (or all of it). Uploads stay: other takes share them.
+        What the worker is still writing, or a sequence in the trash still joins, waits for the next purge."""
+        cutoff = time.time() - TRASH_DAYS * 86400
+        due = lambda r: everything or r.deleted_at < cutoff  # noqa: E731
+        removed, kept = 0, 0
+        with self._seq_lock:
+            gone: set[str] = set()
+            for seq in self.store.list_sequences(limit=-1, trashed=True):
+                if not due(seq):
+                    continue
+                if seq.id not in self._writing and self._remove_files(seq.id):
+                    self.store.remove(seq.id)
+                    gone.add(seq.id)
+                    removed += 1
+                else:
+                    kept += 1
+            held = {i for trashed in (False, True) for s in self.store.list_sequences(limit=-1, trashed=trashed)
+                    for i in s.segments}
+            for job in self.store.list(limit=-1, trashed=True):
+                if not due(job):
+                    continue
+                if job.id not in held and job.id not in self._writing and self._remove_files(job.id):
+                    self.store.remove(job.id)
+                    removed += 1
+                else:
+                    kept += 1
+            for job in self.store.list(limit=-1):  # starred takes outlive their sequence
+                if job.extra.get("sequence_id") in gone:
+                    self.store.update(job.id, extra={k: v for k, v in job.extra.items()
+                                                     if k not in ("sequence_id", "segment")})
+        return {"removed": removed, "kept": kept}
+
+    def recipe_problem(self, preset: str, model: str, seconds: int) -> str | None:
+        """Why saved settings can no longer render, in words; None when they still can."""
+        if preset not in self.exposed_presets():
+            return "this effect is no longer available"
+        if model not in self.catalog():
+            return "this model is no longer available"
+        if seconds not in self.lengths(preset, model):
+            return f"this length is no longer available on {model}"
+        return None
 
     def sequence_receipt(self, seq_id: str) -> dict[str, Any]:
         """How a sequence was made: the ordered join (clips by sha256, each take with its own receipt)."""
@@ -625,10 +754,14 @@ class Engine:
             if job_id.startswith(SEQ):
                 self._reconcile(job_id[len(SEQ):])
                 continue
-            job = self.store.get(job_id)
+            with self._seq_lock:  # one step, so a purge never removes a take the worker is about to start
+                job = self.store.get(job_id)
+                run = job is not None and job.status not in ("cancelled", "succeeded", "failed")
+                if run:
+                    self._writing.add(job_id)
             if job is None:
                 continue
-            if job.status not in ("cancelled", "succeeded", "failed"):
+            if run:
                 try:
                     self._execute(job)
                 except Exception as e:  # noqa: BLE001 — surfaced to the user via the job record
@@ -637,6 +770,8 @@ class Engine:
                             self.store.update(job_id, status="failed", error=f"{type(e).__name__}: {e}"[:800])
                 finally:
                     self._handles.pop(job_id, None)
+                    with self._seq_lock:
+                        self._writing.discard(job_id)
             if job.extra.get("sequence_id"):
                 self._reconcile(job.extra["sequence_id"])
 

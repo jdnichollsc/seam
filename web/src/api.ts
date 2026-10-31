@@ -44,6 +44,8 @@ export type Sequence = {
   story?: string
   /** REST only (live events omit it): the current takes, in segment order */
   takes?: (Job | null)[]
+  /** in the trash since then */
+  deleted_at?: number | null
 }
 
 export type SegmentIn = { preset: string; model?: string; seconds?: number; seed?: number; prompt_extra?: string }
@@ -55,7 +57,27 @@ export type EditIn = { order: number[]; transitions?: Record<string, SegmentIn>;
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
+/** Saved settings of a take, to use on other shots. `problem`: why they can no longer render. */
+export type Recipe = {
+  id: string
+  name: string
+  preset: string
+  model: string
+  seconds: number
+  prompt_extra: string
+  seed: number | null
+  source_job: string
+  created_at: number
+  poster_url?: string
+  problem: string | null
+}
+
+export type Trash = { days: number; jobs: Job[]; sequences: Sequence[] }
+
 export type Job = {
+  starred?: boolean
+  /** in the trash since then */
+  deleted_at?: number | null
   id: string
   status: JobStatus
   progress: number
@@ -85,7 +107,7 @@ export type Job = {
   merged_url?: string
   poster_url?: string
   sheet_url?: string
-  extra: { width?: number; height?: number; duration?: number; prompt?: string; sequence_id?: string; segment?: number; backend?: BackendName }
+  extra: { width?: number; height?: number; duration?: number; prompt?: string; sequence_id?: string; segment?: number; backend?: BackendName; trashed_with?: string }
 }
 
 /** What Seam sees in a shot: a description and a short label, both used in the prompt. */
@@ -122,7 +144,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(detail)
   }
-  return r.json() as Promise<T>
+  return (r.status === 204 ? undefined : r.json()) as Promise<T>
 }
 
 export const api = {
@@ -156,6 +178,26 @@ export const api = {
       body: JSON.stringify(body),
     }),
   cancel: (id: string) => call<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' }),
+  star: (id: string, starred: boolean) =>
+    call<Job>(`/api/jobs/${id}/star`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ starred }),
+    }),
+  trashJob: (id: string) => call<Job>(`/api/jobs/${id}/trash`, { method: 'POST' }),
+  restoreJob: (id: string) => call<Job>(`/api/jobs/${id}/restore`, { method: 'POST' }),
+  trashSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/trash`, { method: 'POST' }),
+  restoreSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/restore`, { method: 'POST' }),
+  trash: () => call<Trash>('/api/trash'),
+  emptyTrash: () => call<{ removed: number; kept: number }>('/api/trash', { method: 'DELETE' }),
+  recipes: () => call<Recipe[]>('/api/recipes'),
+  saveRecipe: (job_id: string, name: string) =>
+    call<Recipe>('/api/recipes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id, name }),
+    }),
+  deleteRecipe: (id: string) => call<void>(`/api/recipes/${id}`, { method: 'DELETE' }),
   sequences: () => call<Sequence[]>('/api/sequences?limit=30'),
   createSequence: (body: { shots: ShotIn[]; segments: SegmentIn[]; story?: string }) =>
     call<Sequence>('/api/sequences', {
