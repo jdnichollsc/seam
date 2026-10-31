@@ -103,19 +103,19 @@ def _check_cloud(s, presets, check) -> None:
     except backends.InvalidKey as e:
         check(False, "Comfy Cloud accepts the key", f"{e}: `seam backend --set-key`")
         return
-    headers = {"X-API-Key": key}
+    from .models import object_info
+
+    info = object_info(s, backends.CLOUD, refresh=True)
+    if info is None:  # not a pass: we simply could not look
+        print("  info could not read Comfy Cloud's node list; nodes and models not checked")
+        return
     needed = required_workflows(presets, s.model, Engine.exposed_statuses())
     graphs = [load_spec(s.workflows_dir, m).graph() for m in sorted(needed)]
-    info: dict[str, dict | None] = {}
     for cls in sorted({n["class_type"] for g in graphs for n in g.values()}):
-        info[cls] = _get(f"{backends.CLOUD_URL}/api/object_info/{cls}", headers)
-        if info[cls] is None:  # not a pass: we simply could not look
-            print("  info could not read Comfy Cloud's node list with an API key; nodes and models not checked")
-            return
-        check(cls in info[cls], f"Comfy Cloud has the node {cls}", "Comfy Cloud does not offer it yet; render locally")
+        check(cls in info, f"Comfy Cloud has the node {cls}", "Comfy Cloud does not offer it yet; render locally")
     for g in graphs:
         for node, field, filename in model_files(g):
-            check(filename in _choices(info.get(node), node, field), f"Comfy Cloud has {filename}",
+            check(filename in _choices(info, node, field), f"Comfy Cloud has {filename}",
                   "Comfy Cloud does not offer it yet; render locally")
 
 

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import media, receipt
 from . import backend as backends
+from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
 from .engine import Engine, SequenceBusy, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
@@ -117,10 +118,12 @@ class TransitionIn(BaseModel):
     b_ref: str | None = Field(default=None, max_length=120)
     clip_a: str | None = Field(default=None, description="clip id from POST /api/uploads?role=a: plays before the transition")
     clip_b: str | None = Field(default=None, description="clip id from POST /api/uploads?role=b: plays after it")
+    model: str | None = Field(default=None, description="id from GET /api/models; omit or '': the effect's own model")
 
 
 class RefineIn(BaseModel):
     preset: str | None = None
+    model: str | None = Field(default=None, description="id from GET /api/models; omit or '': the effect's own model")
     seconds: int | None = None
     seed: int | None = None
     prompt_extra: str | None = Field(default=None, max_length=600)
@@ -142,6 +145,7 @@ class ShotIn(BaseModel):
 class SegmentIn(BaseModel):
     """The transition from one shot to the next: same fields as a transition, minus the shots."""
     preset: str
+    model: str | None = Field(default=None, description="id from GET /api/models; omit or '': the effect's own model")
     seconds: int = 5
     seed: int | None = None
     prompt_extra: str = Field(default="", max_length=600)
@@ -280,6 +284,13 @@ def delete_cloud_key() -> dict[str, Any]:
         raise HTTPException(409, f"{len(active)} take(s) are still on Comfy Cloud; wait for them or cancel them first")
     backends.clear_key(settings)
     return backends.state(settings)
+
+
+@app.get("/api/models")
+def list_models(refresh: bool = False) -> dict[str, Any]:
+    """The models a transition can pick, and whether each can render on the current backend. Downloads nothing."""
+    backend = backends.current(settings)[0]
+    return {"backend": backend, "models": model_status.listing(settings, _engine().catalog(), backend, refresh)}
 
 
 @app.get("/api/presets")
@@ -472,12 +483,13 @@ def job_comfy_bundle(job_id: str) -> Response:
 
 
 @app.get("/api/estimate")
-def estimate(seconds: int = 5) -> dict[str, Any]:
+def estimate(seconds: int = 5, model: str | None = None) -> dict[str, Any]:
     """Typical render time for a take of this length where Seam renders now: median of the last succeeded ones."""
     e = _engine()
     here = backends.current(settings)[0]
     times = [j.wall_s for j in e.store.list(limit=100) if j.status == "succeeded" and j.wall_s
-             and j.params.get("seconds", 5) == seconds and e.backend_of(j) == here][:10]
+             and j.params.get("seconds", 5) == seconds and e.backend_of(j) == here
+             and (not model or j.params.get("model") == model)][:10]
     return {"seconds": round(statistics.median(times)) if times else None, "samples": len(times)}
 
 

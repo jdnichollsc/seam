@@ -1,0 +1,61 @@
+{
+  "16": {
+    "inputs": {
+      "filename_prefix": "video/Seedance2.5_flf2v",
+      "format": "auto",
+      "video": [
+        "38",
+        0
+      ],
+      "format.codec": "auto"
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "38": {
+    "inputs": {
+      "model": "Seedance 2.5",
+      "seed": 0,
+      "watermark": false,
+      "first_frame_asset_id": "",
+      "last_frame_asset_id": "",
+      "first_frame": [
+        "41",
+        0
+      ],
+      "last_frame": [
+        "40",
+        0
+      ],
+      "model.prompt": "The input images are the first and last frames: @image1 is the wide pool view before the activity starts, @image2 is the final top-down view. Smooth cinematic transition, 5 seconds. [0-1.5s] Starting from the first frame, the camera pushes in from the wide view toward the quiet pool, people standing around the edges, activity not yet started. [1.5-3.5s] Swimmers begin jumping into the pool one after another, splashes erupting, the crowd getting excited and lively, many people in swimsuits leaping in from all sides. [3.5-5s] The camera rises to a top-down view as everyone plays in the water, the pool packed and splashing, landing exactly on the last frame image. No black frames, no jump cuts.\n",
+      "model.resolution": "720p",
+      "model.duration": 5,
+      "model.generate_audio": true,
+      "model.output_format": "mp4"
+    },
+    "class_type": "ByteDance2FirstLastFrameNode",
+    "_meta": {
+      "title": "ByteDance Seedance 2.5 First-Last-Frame to Video"
+    }
+  },
+  "40": {
+    "inputs": {
+      "image": "pool_end_frame.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "41": {
+    "inputs": {
+      "image": "pool_start_frame.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  }
+}

@@ -53,7 +53,19 @@
         "139:111",
         "strength"
       ]
-    }
+    },
+    "label": "LTX-2.3 + transition LoRA",
+    "kind": "open",
+    "seconds": [
+      5,
+      8,
+      10
+    ],
+    "prompt": "l23",
+    "backends": [
+      "local",
+      "cloud"
+    ]
   },
   "l25": {
     "workflow": "l25_flf2v.api.json",
@@ -108,7 +120,19 @@
         "251:204",
         "strength"
       ]
-    }
+    },
+    "label": "LTX-2.5",
+    "kind": "open",
+    "seconds": [
+      5,
+      8,
+      10
+    ],
+    "prompt": "l25",
+    "backends": [
+      "local",
+      "cloud"
+    ]
   },
   "describe": {
     "workflow": "describe.api.json",
@@ -121,6 +145,166 @@
       "prompt": [
         "3",
         "prompt"
+      ]
+    }
+  },
+  "wan22": {
+    "workflow": "video_wan2_2_14B_flf2v.api.json",
+    "output_node": "83",
+    "fps": 16,
+    "label": "Wan 2.2",
+    "kind": "open",
+    "seconds": [
+      5
+    ],
+    "prompt": "plain",
+    "backends": [
+      "local",
+      "cloud"
+    ],
+    "slots": {
+      "image_a": [
+        "80",
+        "image"
+      ],
+      "image_b": [
+        "89",
+        "image"
+      ],
+      "prompt": [
+        "90",
+        "text"
+      ],
+      "seed": [
+        "84",
+        "noise_seed"
+      ],
+      "width": [
+        "81",
+        "width"
+      ],
+      "height": [
+        "81",
+        "height"
+      ],
+      "seconds": [
+        "81",
+        "length"
+      ]
+    },
+    "seconds_as_frames": true
+  },
+  "minimax_h3": {
+    "workflow": "api_minimax_h3_flf2v.api.json",
+    "output_node": "26",
+    "fps": 24,
+    "label": "MiniMax H3",
+    "kind": "partner",
+    "seconds": [
+      5,
+      8,
+      10
+    ],
+    "prompt": "plain",
+    "backends": [
+      "cloud"
+    ],
+    "slots": {
+      "image_a": [
+        "15",
+        "image"
+      ],
+      "image_b": [
+        "16",
+        "image"
+      ],
+      "prompt": [
+        "28",
+        "model.prompt"
+      ],
+      "seconds": [
+        "28",
+        "model.duration"
+      ],
+      "seed": [
+        "28",
+        "seed"
+      ]
+    }
+  },
+  "kling_v3": {
+    "workflow": "api_kling_v3_flf2v.api.json",
+    "output_node": "2",
+    "fps": 24,
+    "label": "Kling 3.0",
+    "kind": "partner",
+    "seconds": [
+      5,
+      8,
+      10
+    ],
+    "prompt": "plain",
+    "backends": [
+      "cloud"
+    ],
+    "slots": {
+      "image_a": [
+        "1",
+        "image"
+      ],
+      "image_b": [
+        "13",
+        "image"
+      ],
+      "prompt": [
+        "12",
+        "prompt"
+      ],
+      "seconds": [
+        "12",
+        "duration"
+      ],
+      "seed": [
+        "12",
+        "seed"
+      ]
+    }
+  },
+  "seedance_25": {
+    "workflow": "api_seedance2_5_flf2v.api.json",
+    "output_node": "16",
+    "fps": 24,
+    "label": "Seedance 2.5",
+    "kind": "partner",
+    "seconds": [
+      5,
+      8,
+      10
+    ],
+    "prompt": "plain",
+    "backends": [
+      "cloud"
+    ],
+    "slots": {
+      "image_a": [
+        "41",
+        "image"
+      ],
+      "image_b": [
+        "40",
+        "image"
+      ],
+      "prompt": [
+        "38",
+        "model.prompt"
+      ],
+      "seconds": [
+        "38",
+        "model.duration"
+      ],
+      "seed": [
+        "38",
+        "seed"
       ]
     }
   }

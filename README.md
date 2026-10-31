@@ -124,7 +124,7 @@ The model never leaves your machine; only the recorded orbit or still goes to th
 
 | | |
 |---|---|
-| Category fit | **Open Weights Only**: every render is LTX-2.5 (+ Gemma-4 E2B to read the shots) on your own GPU through core ComfyUI nodes; no partner nodes, no closed APIs. **VFX Workflow built with LTX**: LTX-2.5 first/last-frame is the core model of every effect. |
+| Category fit | **Open Weights Only** by default: every render is LTX-2.5 (+ Gemma-4 E2B to read the shots) on your own GPU through core ComfyUI nodes; partner models exist only as an explicit pick on Comfy Cloud. **VFX Workflow built with LTX**: LTX-2.5 first/last-frame is the core model of every effect. |
 | Comfy Developer Platform | Every render goes through the official **Comfy SDK** to the **Comfy API v2** (`comfy-api-proxy` locally). |
 | Workflow files | [`src/seam/workflows/`](src/seam/workflows) (API format, slot-mapped), and any take exports its exact graph via **Open in ComfyUI**. |
 | Run it locally | [install.md](install.md), checked end to end by `uv run seam doctor`. |
@@ -175,6 +175,12 @@ browser / CLI / agent (MCP)
   (neither has rendered a real take through Seam yet).
 - Each effect is a preset (our own prompt text) routed to the model that renders it best: **LTX-2.5** first/last-frame
   with its in-graph prompt enhancer (every launch effect), or **LTX-2.3** with an open transition LoRA.
+- Any transition, or any part of a sequence, can pick another model. Open: LTX-2.5, LTX-2.3, Wan 2.2. Partner, on Comfy
+  Cloud only, using credits: MiniMax H3, Kling 3.0, Seedance 2.5. The list shows what the current backend can really
+  render and downloads nothing. It is a curated catalog because a model file with no wired graph cannot render; adding one
+  means a graph plus an entry in `workflows/slots.json`. Effects were reviewed on their default model only, and the app
+  says so when you pick another. A sequence joins at the first shot's canvas, so mixed aspect ratios can lose their edges.
+  Shot reading on Comfy Cloud is a separate small charge, and a cancelled or timed-out partner job may still be billed.
 - Seam reads both shots first with the same small local model as the enhancer (Gemma-4 E2B), so the prompt says
   what is in them. You can correct that line before rendering.
 - Workflows are the official ComfyUI templates exported to API format; Seam only touches them through a named

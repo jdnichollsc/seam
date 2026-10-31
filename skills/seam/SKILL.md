@@ -15,6 +15,8 @@ renders at a time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the fir
    ComfyUI + `comfy-api-proxy` are up — `seam doctor` checks everything). Do not try to start GPU services yourself.
    If `seam_status` reports `backend: cloud`, tell the user before rendering that the shots go to Comfy Cloud and
    the takes spend their credits. Never switch the backend or handle an API key: both are the user's.
+   Leave `model` out unless the user names a model: each effect has its reviewed default. If they do, call `list_models`,
+   use only an available id, say the effect was not reviewed on that model, and for `kind: partner` say it spends credits.
 2. Call `list_presets` and only use ids it returns — they are the qualified effects. Never invent preset ids.
 
 ## The loop

@@ -22,6 +22,12 @@ class WorkflowSpec:
     output_node: str
     fps: int
     slots: dict[str, tuple[str, str]]
+    label: str = ""
+    kind: str = "open"                       # open | partner (a paid API node, picked only on request)
+    seconds: tuple[int, ...] = (5,)          # lengths it renders when it is not an effect's qualified model
+    prompt: str = "plain"                    # which prompt renderer (presets.render_prompt)
+    backends: tuple[str, ...] = ("local", "cloud")
+    seconds_as_frames: bool = False          # its length input counts frames: seconds * fps + 1
 
     def graph(self) -> dict[str, Any]:
         return json.loads(self.workflow_file.read_text(encoding="utf-8"))
@@ -30,7 +36,17 @@ class WorkflowSpec:
 def load_spec(workflows_dir: Path, model: str) -> WorkflowSpec:
     data = json.loads((workflows_dir / "slots.json").read_text(encoding="utf-8"))[model]
     return WorkflowSpec(model=model, workflow_file=workflows_dir / data["workflow"], output_node=data["output_node"],
-                        fps=data.get("fps", 0), slots={k: (v[0], v[1]) for k, v in data["slots"].items()})
+                        fps=data.get("fps", 0), slots={k: (v[0], v[1]) for k, v in data["slots"].items()},
+                        label=data.get("label", ""), kind=data.get("kind", "open"),
+                        seconds=tuple(data.get("seconds", (5,))), prompt=data.get("prompt", "plain"),
+                        backends=tuple(data.get("backends", ("local", "cloud"))),
+                        seconds_as_frames=data.get("seconds_as_frames", False))
+
+
+def load_catalog(workflows_dir: Path) -> dict[str, WorkflowSpec]:
+    """The models a transition can pick: every entry with a label (the shot reader has none)."""
+    data = json.loads((workflows_dir / "slots.json").read_text(encoding="utf-8"))
+    return {k: load_spec(workflows_dir, k) for k, v in data.items() if isinstance(v, dict) and v.get("label")}
 
 
 def missing_slots(spec: WorkflowSpec) -> list[str]:
