@@ -62,4 +62,9 @@ def render_prompt(model: str, preset: Preset, a_ref: str = "the first scene", b_
         opening = f"{a_desc[0].upper() + a_desc[1:]}. " if a_desc else ""
         return (f"{context.strip() + ' ' if context else ''}{opening}{path} Camera: {preset.camera}.{extra} "
                 "One smooth continuous seamless transition, no cuts. zhuanchang")
+    if model == "plain":  # any other first/last-frame model: no LTX anchors, no trigger word
+        opening = f"{a_desc[0].upper() + a_desc[1:]}. " if a_desc else ""
+        ending = f" It ends on {b_desc}." if b_desc else ""
+        return (f"{context.strip() + ' ' if context else ''}{opening}{path} Camera: {preset.camera}.{extra}{ending} "
+                "One smooth continuous transition from the first frame to the last frame, no cuts.")
     raise ValueError(f"no prompt renderer for model {model!r}")

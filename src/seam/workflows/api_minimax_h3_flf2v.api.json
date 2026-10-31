@@ -1,0 +1,57 @@
+{
+  "15": {
+    "inputs": {
+      "image": "angel-warrior-demon-battle-start.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "16": {
+    "inputs": {
+      "image": "angel-warrior-demon-battle-end.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "26": {
+    "inputs": {
+      "filename_prefix": "video/MiniMax_H3_flf2v",
+      "format": "auto",
+      "video": [
+        "28",
+        0
+      ],
+      "format.codec": "auto"
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "28": {
+    "inputs": {
+      "model": "MiniMax H3",
+      "seed": 42,
+      "watermark": false,
+      "first_frame": [
+        "15",
+        0
+      ],
+      "last_frame": [
+        "16",
+        0
+      ],
+      "model.prompt": "Use Image 1 as the first frame and Image 2 as the last frame.One continuous cinematic fantasy shot. The angel warrior finishes fighting demons in the smoke, then turns and points her spear at the remaining enemies below. End in a triumphant low-angle hero pose. Same character, same style, smooth motion, no cuts, no text.",
+      "model.resolution": "768P",
+      "model.duration": 5
+    },
+    "class_type": "MinimaxHailuo03FirstLastFrameNode",
+    "_meta": {
+      "title": "MiniMax H3 First-Last-Frame to Video"
+    }
+  }
+}

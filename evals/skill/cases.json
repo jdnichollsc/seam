@@ -143,5 +143,29 @@
       "(?i)api[_ ]key\\W*[=:]",
       "(?i)set_backend"
     ]
+  },
+  {
+    "id": "model_only_when_named",
+    "user_request": "Whip pan from a.png to b.png.",
+    "situation": "Tools are up, backend: local. list_presets returns `smoke`, `whip_pan`. The user named no model.",
+    "must": [
+      "(?i)create_transition"
+    ],
+    "must_not": [
+      "(?i)model\\W*[=:]\\W*[\"']?(kling|minimax|seedance|wan)"
+    ]
+  },
+  {
+    "id": "named_partner_model_disclosed",
+    "user_request": "Whip pan from a.png to b.png using Kling.",
+    "situation": "Tools are up, backend: cloud. list_models returns `kling_v3` kind partner, available true. list_presets returns `whip_pan`.",
+    "must": [
+      "(?i)kling_v3",
+      "(?i)credits?",
+      "(?i)(not|n't) (been )?reviewed|unreviewed"
+    ],
+    "must_not": [
+      "(?i)api[_ ]key\\W*[=:]"
+    ]
   }
 ]

@@ -90,9 +90,17 @@ async def list_presets() -> list[dict[str, Any]]:
 
 
 @server.tool()
+async def list_models() -> dict[str, Any]:
+    """The models a transition can pick and whether each can render on the current backend (`available`: true, false
+    with a `reason`, or null when not checked). `kind: partner` models spend the user's credits on a paid provider.
+    Leave `model` out to use the effect's own model: pick another only when the user names one."""
+    return await _req("GET", "/api/models")
+
+
+@server.tool()
 async def create_transition(image_a: str, image_b: str, preset: str, seconds: int = 5, seed: int | None = None,
                             prompt_extra: str = "", a_desc: str | None = None, b_desc: str | None = None,
-                            a_ref: str | None = None, b_ref: str | None = None) -> dict[str, Any]:
+                            a_ref: str | None = None, b_ref: str | None = None, model: str | None = None) -> dict[str, Any]:
     """Queue a transition video from image A (first frame) to image B (last frame).
 
     image_a / image_b: local file paths to images, or to short clips (1-6 s .mp4/.mov/.webm): with a clip, the
@@ -102,11 +110,12 @@ async def create_transition(image_a: str, image_b: str, preset: str, seconds: in
     to the preset. Seam reads both shots itself (local model) to describe them in the prompt; pass a_desc / b_desc
     only to correct that reading — a noun phrase like "a young woman with a calm smile in a red jacket on a rainy
     street at night" — and a_ref / b_ref as short labels like "the woman in the red jacket". "" means describe
-    nothing. Returns the job (with the descriptions used once it starts); follow with wait_job.
+    nothing. model: an id from list_models, only when the user asks for one; the effect has only been reviewed on its
+    own model. Returns the job (with the descriptions used once it starts); follow with wait_job.
     """
     a, b = await asyncio.gather(_upload(image_a, "a"), _upload(image_b, "b"))
     body = {"image_a": a["id"], "image_b": b["id"], "clip_a": a.get("clip"), "clip_b": b.get("clip"), "preset": preset, "seconds": seconds, "seed": seed, "prompt_extra": prompt_extra,
-            "a_desc": a_desc, "b_desc": b_desc, "a_ref": a_ref, "b_ref": b_ref}
+            "a_desc": a_desc, "b_desc": b_desc, "a_ref": a_ref, "b_ref": b_ref, "model": model}
     return _brief(await _req("POST", "/api/transitions", json=body))
 
 
@@ -152,13 +161,14 @@ async def preview_job(job_id: str) -> Image:
 @server.tool()
 async def refine_job(job_id: str, preset: str | None = None, seconds: int | None = None, prompt_extra: str | None = None,
                      seed: int | None = None, a_desc: str | None = None, b_desc: str | None = None,
-                     a_ref: str | None = None, b_ref: str | None = None) -> dict[str, Any]:
+                     a_ref: str | None = None, b_ref: str | None = None, model: str | None = None) -> dict[str, Any]:
     """Re-run a previous job with changes (new preset or length, extra direction, descriptions, or a pinned seed).
 
-    Unchanged fields are inherited; without `seed` a fresh take is rolled. The new job links to its parent.
+    Unchanged fields are inherited; without `seed` a fresh take is rolled. The new job links to its parent. model: an
+    id from list_models; "" returns to the effect's own model.
     """
     body = {"preset": preset, "seconds": seconds, "prompt_extra": prompt_extra, "seed": seed, "a_desc": a_desc, "b_desc": b_desc,
-            "a_ref": a_ref, "b_ref": b_ref}
+            "a_ref": a_ref, "b_ref": b_ref, "model": model}
     return _brief(await _req("POST", f"/api/jobs/{job_id}/refine", json=body))
 
 
@@ -192,7 +202,7 @@ async def create_sequence(shots: list[str], segments: list[dict[str, Any]], stor
 
     shots: 2-8 local file paths in order, images or short clips (1-6 s). A clip plays in full at its place; the
     transition before it lands on its first frame and the one after it leaves from its last frame. segments: one
-    dict per hand-off (len(shots) - 1), each {"preset": id from list_presets, "seconds"?: one of its lengths,
+    dict per hand-off (len(shots) - 1), each {"preset": id from list_presets, "model"?: id from list_models, "seconds"?: one of its lengths,
     "seed"?, "prompt_extra"?, "a_desc"?, "b_desc"?}. Every segment is checked before anything renders; each one is
     an ordinary job (judge it with preview_job). Every take renders at the first shot's size (the sequence keeps
     that canvas through later edits). story: optional, ≤300 chars, the idea of the whole film (who, where, mood),
@@ -205,29 +215,30 @@ async def create_sequence(shots: list[str], segments: list[dict[str, Any]], stor
     return _seq_brief(await _req("POST", "/api/sequences", json=body))
 
 
-async def _grow_body(shot: str, preset: str, seconds: int, seed: int | None, prompt_extra: str) -> dict[str, Any]:
+async def _grow_body(shot: str, preset: str, seconds: int, seed: int | None, prompt_extra: str,
+                     model: str | None = None) -> dict[str, Any]:
     u = await _upload(shot, "mid")
     return {"shot": {"clip": u["clip"], "first": u["first"], "last": u["last"]} if u.get("clip") else {"image": u["id"]},
-            "segment": {"preset": preset, "seconds": seconds, "seed": seed, "prompt_extra": prompt_extra}}
+            "segment": {"preset": preset, "seconds": seconds, "seed": seed, "prompt_extra": prompt_extra, "model": model}}
 
 
 @server.tool()
 async def extend_sequence(sequence_id: str, shot: str, preset: str, seconds: int = 5, seed: int | None = None,
-                          prompt_extra: str = "") -> dict[str, Any]:
+                          prompt_extra: str = "", model: str | None = None) -> dict[str, Any]:
     """Add one more shot to the end of a finished sequence: only the transition into it renders (from the last
     shot to this one), the other takes are reused and the video is joined again. shot: a local image or 1-6 s clip
     path. Follow with wait_sequence, then preview_job on the new take before adding the next shot."""
-    body = await _grow_body(shot, preset, seconds, seed, prompt_extra)
+    body = await _grow_body(shot, preset, seconds, seed, prompt_extra, model)
     return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/shots", json=body))
 
 
 @server.tool()
 async def continue_take(job_id: str, shot: str, preset: str, seconds: int = 5, seed: int | None = None,
-                        prompt_extra: str = "", story: str = "") -> dict[str, Any]:
+                        prompt_extra: str = "", story: str = "", model: str | None = None) -> dict[str, Any]:
     """Start a story from a finished two-shot transition: it becomes the first transition of a new sequence
     (nothing re-renders) and `shot` is added after it. Use extend_sequence for the shots after that. story: the
     idea of the whole film, used by the new transition and every later one."""
-    body = {**await _grow_body(shot, preset, seconds, seed, prompt_extra), "story": story}
+    body = {**await _grow_body(shot, preset, seconds, seed, prompt_extra, model), "story": story}
     return _seq_brief(await _req("POST", f"/api/jobs/{job_id}/continue", json=body))
 
 
@@ -286,12 +297,12 @@ async def preview_sequence(sequence_id: str) -> Image:
 @server.tool()
 async def refine_segment(sequence_id: str, segment: int, preset: str | None = None, seconds: int | None = None,
                          prompt_extra: str | None = None, seed: int | None = None, a_desc: str | None = None,
-                         b_desc: str | None = None) -> dict[str, Any]:
+                         b_desc: str | None = None, model: str | None = None) -> dict[str, Any]:
     """A new take of one segment (1-based) once the sequence has settled; the other takes are reused and the video
     is joined again. Same rules as refine_job: unchanged fields are inherited, a fresh seed unless pinned. The new
     take uses the sequence's current story."""
     body = {"preset": preset, "seconds": seconds, "prompt_extra": prompt_extra, "seed": seed, "a_desc": a_desc,
-            "b_desc": b_desc}
+            "b_desc": b_desc, "model": model}
     return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/segments/{segment}/refine", json=body))
 
 

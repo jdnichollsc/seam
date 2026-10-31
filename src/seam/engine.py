@@ -17,18 +17,18 @@ from typing import Any
 from comfy_sdk import Comfy, Progress, StatusChange
 
 from . import backend as backends
+from . import models as model_status
 from . import describe as shots
 from . import media, receipt
 from .config import Settings
 from .describe import ShotText
 from .jobs import JobRecord, JobStore, SequenceRecord
 from .presets import Preset, load_presets, render_prompt
-from .workflows import WorkflowSpec, build, load_spec
+from .workflows import WorkflowSpec, build, load_catalog, load_spec
 
 SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may still have rendered there "
                   "(check ComfyUI's queue/output). Use New take to render it again.")
 SECONDS_CHOICES = (5, 8, 10)  # what the graphs render; each launch effect lists the lengths it is qualified at
-PUBLIC_MODELS = ("l25", "l23")  # LTX family only: other models were research-only and never ship
 SEQUENCE_SHOTS = (2, 8)
 CLOUD_GRACE_S = 30.0
 SEQ = "seq:"  # worker queue items for sequences (reconcile/join), next to plain job ids
@@ -52,7 +52,7 @@ class TransitionRequest:
     a_ref: str | None = None    # short labels used inside the effect text ("the woman in the red jacket")
     b_ref: str | None = None
     enhance: bool = True        # in-graph prompt enhancer (open, local)
-    model: str | None = None    # override the preset's model (l25 | l23)
+    model: str | None = None    # a catalog id overriding the effect's qualified model; None or "": that model
     clip_a: str | None = None   # optional clips around the transition: image_a is clip_a's last frame,
     clip_b: str | None = None   # image_b is clip_b's first frame, and the result is clip A + transition + clip B
     width: int | None = None    # pinned canvas (sequences: every segment renders at S0's size); None → from image_a
@@ -116,9 +116,15 @@ class Engine:
                 if j.status in ("queued", "running") and self.backend_of(j) == backends.CLOUD]
 
     # -- models ---------------------------------------------------------------------------------
-    @staticmethod
-    def enabled_models() -> tuple[str, ...]:
-        return PUBLIC_MODELS
+    def catalog(self) -> dict[str, WorkflowSpec]:
+        return load_catalog(self.settings.workflows_dir)
+
+    def lengths(self, preset_id: str, model: str) -> tuple[int, ...]:
+        """An effect's lengths are qualified on its own model; on any other model, the model's lengths apply."""
+        preset = self.presets[preset_id]
+        if preset.status == "launch" and (preset.model or self.settings.model) == model:
+            return preset.seconds
+        return self.spec(model).seconds
 
     @staticmethod
     def exposed_statuses() -> tuple[str, ...]:
@@ -140,17 +146,19 @@ class Engine:
     def validate(self, req: TransitionRequest) -> None:
         if req.preset not in self.exposed_presets():
             raise ValueError(f"unknown preset {req.preset!r}; choose one of {sorted(self.exposed_presets())}")
-        if self.model_for(req) not in self.enabled_models():
-            raise ValueError(f"model {self.model_for(req)!r} is not enabled; available: {self.enabled_models()}")
-        preset = self.presets[req.preset]
-        if preset.status == "launch" and preset.model and self.model_for(req) != preset.model:
-            # qualification was judged on one model; another model renders an unreviewed effect
-            raise ValueError(f"effect {req.preset!r} is qualified on model {preset.model!r} only")
+        model = self.model_for(req)
+        catalog = self.catalog()
+        if model not in catalog:
+            raise ValueError(f"unknown model {model!r}; choose one of {sorted(catalog)}")
+        refusal = model_status.known_refusal(self.settings, catalog[model], backends.current(self.settings)[0])
+        if refusal:
+            raise ValueError(f"{catalog[model].label} cannot render here: {refusal}")
         if req.seconds not in SECONDS_CHOICES:
             raise ValueError(f"seconds must be one of {SECONDS_CHOICES}")
-        if preset.status == "launch" and req.seconds not in preset.seconds:
+        allowed = self.lengths(req.preset, model)
+        if req.seconds not in allowed:
             # each length is qualified on its own: a longer take paces the effect differently
-            raise ValueError(f"effect {req.preset!r} is qualified at {', '.join(map(str, preset.seconds))} s only")
+            raise ValueError(f"effect {req.preset!r} on {model} renders at {', '.join(map(str, allowed))} s only")
         for p in (req.image_a, req.image_b, req.clip_a, req.clip_b):
             if p and not Path(p).is_file():
                 raise ValueError(f"file not found: {Path(p).name}")
@@ -178,12 +186,15 @@ class Engine:
         if base is None:
             raise KeyError(job_id)
         params = {**base.params, **{k: v for k, v in changes.items() if v is not None}}
-        if changes.get("preset") and not changes.get("model"):
-            params["model"] = None  # a new preset brings its own preferred model
+        old = self.presets.get(base.params.get("preset"))
+        picked = old is not None and base.params.get("model") not in (None, "", old.model or self.settings.model)
+        if changes.get("preset") and not changes.get("model") and not picked:
+            params["model"] = None  # a new preset brings its own preferred model; a model the user picked stays
         new = self.presets.get(params["preset"])
-        if changes.get("preset") and changes.get("seconds") is None and new and new.status == "launch" \
-                and params.get("seconds", 5) not in new.seconds:
-            params["seconds"] = new.seconds[0]  # the new effect is not qualified at the old length
+        if changes.get("seconds") is None and new and (params.get("model") or new.model or self.settings.model) in self.catalog():
+            allowed = self.lengths(params["preset"], params.get("model") or new.model or self.settings.model)
+            if params.get("seconds", 5) not in allowed:
+                params["seconds"] = allowed[0]  # not rendered at the old length with this effect and model
         if changes.get("seed") is None:
             params["seed"] = None  # a refinement is a new take unless the caller pins the seed
         for side in ("a", "b"):  # a corrected description drops the old label, which may contradict it
@@ -303,9 +314,11 @@ class Engine:
             for key in ("first", "last", "clip"):
                 if s_.get(key) and not Path(s_[key]).is_file():
                     raise ValueError(f"file not found: {Path(s_[key]).name}")
-        self.validate(self._next_request(shots[-1]["last"], shot, segment, info.width, info.height))
+        # some models size their own output (720p): the canvas of what follows stays on the grid the graphs need
+        width, height = info.width - info.width % 32, info.height - info.height % 32
+        self.validate(self._next_request(shots[-1]["last"], shot, segment, width, height))
         with self._seq_lock:
-            seq = self.store.create_sequence(shots, [job.id], info.width, info.height, story.strip())
+            seq = self.store.create_sequence(shots, [job.id], width, height, story.strip())
             seq = self.store.update_sequence(seq.id, status="succeeded")  # one finished take: nothing to wait for
             try:
                 new = self._append_locked(seq, shot, segment)
@@ -506,7 +519,7 @@ class Engine:
                     parts.append(Path(shot["clip"]))
                 if i < len(jobs):
                     parts.append(out_dir / jobs[i].output)
-            fps = media.probe(out_dir / jobs[0].output).fps
+            fps = max(media.probe(out_dir / j.output).fps for j in jobs)  # the highest: models differ, no take may lose frames
             media.join(parts, dst, seq.width, seq.height, fps)
             media.poster(dst, out_dir / f"{dst.stem}.jpg")
             media.contact_sheet(dst, out_dir / f"{dst.stem}_sheet.png", n=6 * len(jobs), height=160, cols=6)
@@ -548,7 +561,7 @@ class Engine:
     def prompt_for(self, req: TransitionRequest) -> str:
         if req.prompt_override.strip():
             return req.prompt_override.strip()
-        return render_prompt(self.model_for(req), self.presets[req.preset],
+        return render_prompt(self.spec(self.model_for(req)).prompt, self.presets[req.preset],
                              a_ref=req.a_ref or "the first scene", b_ref=req.b_ref or "the second scene",
                              a_desc=req.a_desc or None, b_desc=req.b_desc or None, extra=req.prompt_extra,
                              seconds=req.seconds, story=req.story or "")
@@ -640,7 +653,8 @@ class Engine:
             width, height = ((req.width, req.height) if req.width and req.height
                              else media.output_size(*media.image_size(Path(req.image_a))))
             prompt = self.prompt_for(req)
-            params: dict[str, Any] = {"prompt": prompt, "seed": req.seed, "seconds": req.seconds}
+            params: dict[str, Any] = {"prompt": prompt, "seed": req.seed,
+                                      "seconds": req.seconds * spec.fps + 1 if spec.seconds_as_frames else req.seconds}
             if "width" in spec.slots:
                 params.update(width=width, height=height)
             if "enhance_prompt" in spec.slots:
@@ -653,7 +667,9 @@ class Engine:
                 if self.store.get(job.id).status == "cancelled":  # cancelled while its shots were being read
                     return
                 self.store.update(job.id, extra={**self.store.get(job.id).extra, "submitting_at": time.time()})
-                handle = client.submit(wf)
+                # a partner node bills through the key; it is passed for this request only and stored nowhere
+                handle = client.submit(wf, **({"api_key": backends.cloud_key(self.settings)[0]}
+                                              if spec.kind == "partner" else {}))
                 self.store.update(job.id, status="running", comfy_job_id=handle.id,
                                   extra={**self.store.get(job.id).extra, "prompt": prompt, "width": width,
                                          "height": height, "submitted_at": time.time()})
@@ -748,7 +764,8 @@ class Engine:
         self.store.update(job.id, status="succeeded", progress=1.0, output=mp4.name, poster=f"{job.id}.jpg",
                           sheet=f"{job.id}_sheet.png",
                           wall_s=round(time.time() - self.store.get(job.id).extra.get("submitted_at", time.time() - (time.monotonic() - t0)), 1),
-                          extra={**self.store.get(job.id).extra, "duration": info.duration, "fps": info.fps,
+                          extra={**self.store.get(job.id).extra, "width": info.width, "height": info.height,
+                                 "duration": info.duration, "fps": info.fps,
                                  "has_audio": info.has_audio, **({"merged": merged} if merged else {}),
                                  **({"merge_error": merge_error} if merge_error else {})})
 

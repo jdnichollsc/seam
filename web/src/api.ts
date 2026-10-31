@@ -46,7 +46,9 @@ export type Sequence = {
   takes?: (Job | null)[]
 }
 
-export type SegmentIn = { preset: string; seconds?: number; seed?: number; prompt_extra?: string }
+export type SegmentIn = { preset: string; model?: string; seconds?: number; seed?: number; prompt_extra?: string }
+/** A model a transition can pick. available: false disabled with a reason, null when it could not be checked. */
+export type ModelRow = { id: string; label: string; kind: 'open' | 'partner'; seconds: number[]; available: boolean | null; reason: string }
 export type ShotIn = { image: string } | { clip: string; first: string; last: string }
 /** order: current shot numbers in the new order; transitions: number in the NEW order → its effect (new hand-offs) */
 export type EditIn = { order: number[]; transitions?: Record<string, SegmentIn>; story?: string; expected_updated_at?: number }
@@ -140,14 +142,14 @@ export const api = {
   },
   describe: (uploadId: string) => call<ShotText & { deferred?: boolean }>(`/api/describe/${uploadId}`, { method: 'POST' }),
   create: (
-    body: { image_a: string; image_b: string; preset: string; seconds?: number; seed?: number; prompt_extra?: string; clip_a?: string; clip_b?: string } & ShotFields,
+    body: { image_a: string; image_b: string; preset: string; model?: string; seconds?: number; seed?: number; prompt_extra?: string; clip_a?: string; clip_b?: string } & ShotFields,
   ) =>
     call<Job>('/api/transitions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  refine: (id: string, body: { preset?: string; seconds?: number; seed?: number; prompt_extra?: string }) =>
+  refine: (id: string, body: { preset?: string; model?: string; seconds?: number; seed?: number; prompt_extra?: string }) =>
     call<Job>(`/api/jobs/${id}/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -162,7 +164,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   /** `segment` is 1-based, as the server and the agent tools count. */
-  refineSegment: (id: string, segment: number, body: { preset?: string; seconds?: number; prompt_extra?: string; seed?: number } = {}) =>
+  refineSegment: (id: string, segment: number, body: { preset?: string; model?: string; seconds?: number; prompt_extra?: string; seed?: number } = {}) =>
     call<Sequence>(`/api/sequences/${id}/segments/${segment}/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,7 +192,8 @@ export const api = {
     }),
   cancelSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/cancel`, { method: 'POST' }),
   assembleSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/assemble`, { method: 'POST' }),
-  estimate: (seconds = 5) => call<Estimate>(`/api/estimate?seconds=${seconds}`),
+  estimate: (seconds = 5, model?: string) => call<Estimate>(`/api/estimate?seconds=${seconds}${model ? `&model=${model}` : ''}`),
+  models: () => call<{ backend: BackendName; models: ModelRow[] }>('/api/models'),
   examples: () => call<Example[]>('/api/examples'),
   loadExample: (id: string) => call<{ a: Upload; b: Upload; preset: string }>(`/api/examples/${id}`, { method: 'POST' }),
 }

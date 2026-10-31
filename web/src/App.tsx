@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { createContext, Fragment, lazy, Suspense, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
 import {
@@ -11,6 +11,7 @@ import {
   type BackendName,
   type BackendState,
   type Health,
+  type ModelRow,
   type Job,
   type Preset,
   type Sequence,
@@ -27,6 +28,52 @@ const GlbStudio = lazy(() => import('./GlbStudio'))
 const isModel = (f: File) => /\.glb$/i.test(f.name) || f.type === 'model/gltf-binary'
 
 const MODEL_LABEL: Record<string, string> = { l25: 'LTX-2.5', l23: 'LTX-2.3', h3: 'MiniMax H3' }
+const ModelsContext = createContext<ModelRow[]>([])
+
+/** Lengths are qualified per effect on its own model; any model picked instead renders at its own lengths. */
+function allowedLengths(effect: { model?: string; seconds?: number[] } | undefined, pick: string, models: ModelRow[]): number[] {
+  if (!pick || pick === effect?.model) return effect?.seconds ?? [5]
+  return models.find((m) => m.id === pick)?.seconds ?? [5]
+}
+
+/** The model of one transition. Empty: the effect's own, reviewed model. Unavailable ones stay listed, disabled. */
+function ModelSelect({ value, onChange, effectModel, disabled, compact, label = 'Model' }: {
+  value: string
+  onChange: (id: string) => void
+  effectModel?: string
+  disabled?: boolean
+  compact?: boolean
+  label?: string
+}) {
+  const models = useContext(ModelsContext)
+  const own = models.find((m) => m.id === effectModel)?.label ?? MODEL_LABEL[effectModel ?? '']
+  const row = (m: ModelRow) => (
+    <option key={m.id} value={m.id} disabled={m.available === false}>
+      {m.label}{m.available === false ? ` (${m.reason})` : ''}
+    </option>
+  )
+  const others = models.filter((m) => m.id !== effectModel)
+  const select = (
+    <select aria-label={compact ? label : undefined} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{own ? `${own} (default)` : 'Default'}</option>
+      <optgroup label="Open models">{others.filter((m) => m.kind === 'open').map(row)}</optgroup>
+      <optgroup label="Partner models · use credits">{others.filter((m) => m.kind === 'partner').map(row)}</optgroup>
+    </select>
+  )
+  if (compact) return select
+  const picked = value && value !== effectModel ? models.find((m) => m.id === value) : undefined
+  return (
+    <label className="next-effect model-pick">
+      <span>{label}</span>
+      {select}
+      {picked && (
+        <small className="add-next-note">
+          Not reviewed with this effect.{picked.kind === 'partner' ? ' Uses credits on a paid provider.' : ''}
+        </small>
+      )}
+    </label>
+  )
+}
 const ACTIVE = new Set(['queued', 'running'])
 /** Effect picker value for "pick one of the qualified effects for me" (resolved when the take is made). */
 const SURPRISE = '__surprise__'
@@ -88,16 +135,18 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
   busy: boolean
   disabled?: boolean
   blocked?: string  // why it cannot grow yet; shown instead of the hint
-  effects: { id: string; name: string }[]
+  effects: { id: string; name: string; model?: string }[]
   defaultEffect: string
   seconds: number
-  onMake: (f: File, effect: string, direction: string) => Promise<boolean>
+  onMake: (f: File, effect: string, direction: string, model: string) => Promise<boolean>
 }) {
   const input = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const [effect, setEffect] = useState(defaultEffect)
   const [direction, setDirection] = useState('')  // what happens during THIS transition (its own prompt)
+  const [modelChoice, setModelChoice] = useState('')
+  const effectModel = effects.find((x) => x.id === effect)?.model
   const preview = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
   const pick = (f?: File | null) => {
@@ -164,6 +213,7 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
           <figcaption>New shot</figcaption>
         </figure>
       </div>
+      <ModelSelect value={modelChoice} onChange={setModelChoice} effectModel={effectModel} disabled={busy} />
       <label className="next-direction">
         <span>What happens during this transition · optional</span>
         <textarea rows={2} maxLength={600} value={direction} disabled={busy}
@@ -172,7 +222,7 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
       </label>
       <div className="next-actions">
         <button className="btn btn-primary btn-sm" disabled={busy || !effect}
-          onClick={async () => { if (await onMake(file, effect, direction.trim())) { setFile(null); setDirection('') } }}>
+          onClick={async () => { if (await onMake(file, effect, direction.trim(), modelChoice)) { setFile(null); setDirection('') } }}>
           {busy ? 'Adding…' : 'Make this transition'}
         </button>
         <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => input.current?.click()}>Change shot</button>
@@ -184,8 +234,8 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
   )
 }
 
-type FxOption = { id: string; name: string; seconds: number[] }
-type Remake = { preset: string; seconds: number; prompt_extra: string; seed?: number }
+type FxOption = { id: string; name: string; seconds: number[]; model?: string }
+type Remake = { preset: string; model: string; seconds: number; prompt_extra: string; seed?: number }
 
 /** "New take" of one transition in a sequence: keep or change its effect, length and direction, pin a seed or not.
  *  Unchanged, it is a plain re-roll (a new seed). Only this transition renders. */
@@ -199,12 +249,16 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
 }) {
   const p = take.params
   const [fx, setFx] = useState(effects.some((e) => e.id === p.preset) ? p.preset : (effects[0]?.id ?? ''))
-  const lens = effects.find((e) => e.id === fx)?.seconds ?? [5]
+  const models = useContext(ModelsContext)
+  const effect = effects.find((e) => e.id === fx)
+  // a model the user picked stays picked; the effect's own model reads as the default
+  const [pick, setPick] = useState(p.model && p.model !== effects.find((e) => e.id === p.preset)?.model ? p.model : '')
+  const lens = allowedLengths(effect, pick, models)
   const [secs, setSecs] = useState(p.seconds ?? 5)
   const length = lens.includes(secs) ? secs : lens[0]
   const [extra, setExtra] = useState(p.prompt_extra ?? '')
   const [seed, setSeed] = useState('')
-  const changed = fx !== p.preset || length !== (p.seconds ?? 5) || extra.trim() !== (p.prompt_extra ?? '').trim()
+  const changed = fx !== p.preset || (pick || effect?.model) !== p.model || length !== (p.seconds ?? 5) || extra.trim() !== (p.prompt_extra ?? '').trim()
   const newStory = (p.story ?? '') !== story
   return (
     <div className="take-edit">
@@ -214,6 +268,7 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
           {effects.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </label>
+      <ModelSelect value={pick} onChange={setPick} effectModel={effect?.model} disabled={busy} />
       <div className="take-edit-len">
         <span>Length</span>
         <div className="seg seg-sm" role="radiogroup" aria-label="Take length">
@@ -239,7 +294,7 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
       <div className="next-actions">
         <button className="btn btn-primary btn-sm" disabled={busy || !fx}
           onClick={async () => {
-            if (await onMake({ preset: fx, seconds: length, prompt_extra: extra.trim(), seed: seed ? Number(seed) : undefined })) onClose()
+            if (await onMake({ preset: fx, model: pick, seconds: length, prompt_extra: extra.trim(), seed: seed ? Number(seed) : undefined })) onClose()
           }}>
           {busy ? 'Starting…' : changed ? 'Make this take' : 'New take, same direction'}
         </button>
@@ -252,7 +307,7 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
   )
 }
 
-type Board = { at: number; order: number[]; story: string; fx: Record<string, { preset: string; extra: string }> }
+type Board = { at: number; order: number[]; story: string; fx: Record<string, { preset: string; extra: string; model?: string }> }
 
 /** The sequence as a storyboard: its story, and its shots in order (move, remove). Changes stage here; Apply renders
  *  only the hand-offs whose two shots were not already next to each other, and joins the video again. */
@@ -264,6 +319,7 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
   onApply: (body: EditIn) => Promise<boolean>
 }) {
   const [draft, setDraft] = useState<Board | null>(null)  // null: nothing staged, the strip shows the sequence
+  const models = useContext(ModelsContext)
   const [drag, setDrag] = useState<number | null>(null)
   const settled = !SEQ_ACTIVE.has(seq.status)
   const story = seq.story ?? ''
@@ -292,12 +348,12 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
   const storyChanged = b.story.trim() !== story
   const dirty = reordered || storyChanged
   const stale = !!draft && draft.at !== seq.updated_at
-  const lenOf = (id: string) => effects.find((e) => e.id === id)?.seconds[0] ?? 5
+  const lenOf = (id: string, pick = '') => allowedLengths(effects.find((e) => e.id === id), pick, models)[0]
   const apply = async () => {
     const ok = await onApply({
       order: b.order.map((i) => i + 1),
       transitions: Object.fromEntries(fresh.map((l) => [String(l.k + 1),
-        { preset: l.spec.preset, seconds: lenOf(l.spec.preset), prompt_extra: l.spec.extra.trim() }])),
+        { preset: l.spec.preset, model: l.spec.model || undefined, seconds: lenOf(l.spec.preset, l.spec.model), prompt_extra: l.spec.extra.trim() }])),
       story: b.story.trim(),
       expected_updated_at: b.at,
     })
@@ -357,6 +413,9 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
                       onChange={(e) => edit((d) => ({ ...d, fx: { ...d.fx, [link.key]: { ...link.spec, preset: e.target.value } } }))}>
                       {effects.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                     </select>
+                    <ModelSelect compact label={`Model into shot ${pos + 2}`} value={link.spec.model ?? ''} disabled={busy}
+                      effectModel={effects.find((e) => e.id === link.spec.preset)?.model}
+                      onChange={(id) => edit((d) => ({ ...d, fx: { ...d.fx, [link.key]: { ...link.spec, model: id } } }))} />
                     <input aria-label={`What happens from shot ${pos + 1} to shot ${pos + 2}`} placeholder="Direction (optional)"
                       maxLength={600} value={link.spec.extra} disabled={busy}
                       onChange={(e) => edit((d) => ({ ...d, fx: { ...d.fx, [link.key]: { ...link.spec, extra: e.target.value } } }))} />
@@ -981,7 +1040,7 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
 }
 
 /** One sequence hand-off in the editor: the effect and length of the take from shot i to shot i + 1. */
-type Seg = { preset: string; seconds: number; extra: string }
+type Seg = { preset: string; seconds: number; extra: string; model?: string }
 
 type ShotListProps = {
   shots: Upload[]
@@ -1113,6 +1172,8 @@ export default function App() {
   const [extra, setExtra] = useState('')
   const [seed, setSeed] = useState('')
   const [seconds, setSeconds] = useState(5)
+  const [modelPick, setModelPick] = useState('')  // '': the effect's own model
+  const [models, setModels] = useState<ModelRow[]>([])
   const [error, setError] = useState<string | null>(null)
   const [focusId, setFocusId] = useState<string | null>(null)
   const [showFull, setShowFull] = useState(true)
@@ -1137,8 +1198,8 @@ export default function App() {
   const doneCount = jobs.filter((j) => j.status === 'succeeded').length
   useEffect(() => {
     setEstimate(null)
-    api.estimate(seconds).then((e) => setEstimate(e.seconds)).catch(() => {})
-  }, [doneCount, seconds])
+    api.estimate(seconds, modelPick || undefined).then((e) => setEstimate(e.seconds)).catch(() => {})
+  }, [doneCount, seconds, modelPick])
 
   const updateNote = useCallback((which: 'a' | 'b', upload: string, change: (n: Note) => Note) => {
     setNotes((prev) => {
@@ -1182,24 +1243,33 @@ export default function App() {
   const focusActive = !!focus && ACTIVE.has(focus.status)
   const focusDone = focus?.status === 'succeeded' && !!focus.output_url
   const effectLabel = preset === SURPRISE ? 'Surprise me' : (current?.name ?? 'Pick an effect')
-  const lengthsOf = (p?: Preset) => p?.seconds ?? [5]
-  const fxOptions = useMemo(() => presets.map((p) => ({ id: p.id, name: p.name, seconds: lengthsOf(p) })), [presets]) // eslint-disable-line react-hooks/exhaustive-deps
+  const lengthsOf = (p?: Preset) => allowedLengths(p, modelPick, models)
+  const fxOptions = useMemo(() => presets.map((p) => ({ id: p.id, name: p.name, seconds: p.seconds ?? [5], model: p.model })), [presets])
   // every length any effect offers; the picked effect (or, for Surprise me, at least one effect) must offer it
-  const lengths = useMemo(() => Array.from(new Set(presets.flatMap(lengthsOf))).sort((x, y) => x - y), [presets])
+  const lengths = useMemo(() => Array.from(new Set(presets.flatMap(lengthsOf))).sort((x, y) => x - y), [presets, modelPick, models]) // eslint-disable-line react-hooks/exhaustive-deps
   const offers = (s: number) => (preset === SURPRISE ? presets.some((p) => lengthsOf(p).includes(s)) : lengthsOf(current).includes(s))
   useEffect(() => {
     if (presets.length && !offers(seconds)) setSeconds(preset === SURPRISE ? 5 : lengthsOf(current)[0])
-  }, [preset, presets]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [preset, presets, modelPick, models]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {  // what can render depends on the backend; a pick that cannot goes back to the default
+    if (!health) return
+    api.models().then((r) => {
+      setModels(r.models)
+      setModelPick((m) => (r.models.find((x) => x.id === m)?.available === false ? '' : m))
+    }).catch(() => {})
+  }, [health?.backend]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (mode !== 'seq' || !segs[sel]) return
+    setModelPick(segs[sel].model ?? '')
     setPreset(segs[sel].preset)
     setSeconds(segs[sel].seconds)
     setExtra(segs[sel].extra)
   }, [mode, sel]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (mode === 'seq') setSegs((prev) => prev.map((g, i) => (i === sel ? { preset, seconds, extra } : g)))
-  }, [preset, seconds, extra]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (mode === 'seq') setSegs((prev) => prev.map((g, i) => (i === sel ? { preset, seconds, extra, model: modelPick } : g)))
+  }, [preset, seconds, extra, modelPick]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addShots = useCallback(async (files: File[]) => {
     setError(null)
@@ -1226,7 +1296,7 @@ export default function App() {
   useEffect(() => {
     const n = Math.max(0, shots.length - 1)
     setSegs((prev) => (prev.length === n ? prev : prev.length > n ? prev.slice(0, n)
-      : [...prev, ...Array.from({ length: n - prev.length }, () => ({ preset, seconds, extra: '' }))]))
+      : [...prev, ...Array.from({ length: n - prev.length }, () => ({ preset, seconds, extra: '', model: modelPick }))]))
     setSel((v) => Math.min(v, Math.max(0, n - 1)))
   }, [shots.length]) // eslint-disable-line react-hooks/exhaustive-deps
   const removeShot = (i: number) => {
@@ -1237,6 +1307,7 @@ export default function App() {
     setSel(at)
     if (next[at]) {
       setPreset(next[at].preset)
+      setModelPick(next[at].model ?? '')
       setSeconds(next[at].seconds)
       setExtra(next[at].extra)
     }
@@ -1305,9 +1376,10 @@ export default function App() {
         story: story.trim(),
         shots: shots.map((u) => (u.clip && u.first && u.last ? { clip: u.clip, first: u.first, last: u.last } : { image: u.id })),
         segments: segs.map((g) => {
-          const pool = presets.filter((p) => lengthsOf(p).includes(g.seconds))
+          const pool = presets.filter((p) => allowedLengths(p, g.model ?? '', models).includes(g.seconds))
           return {
             preset: g.preset === SURPRISE ? (pool[Math.floor(Math.random() * pool.length)]?.id ?? '') : g.preset,
+            model: g.model || undefined,
             seconds: g.seconds,
             prompt_extra: g.extra.trim(),
             seed: seed.trim() ? Number(seed) : undefined,
@@ -1360,19 +1432,23 @@ export default function App() {
   }
 
   /** The next shot after a finished take (it becomes a sequence) or a finished sequence: only the new transition renders. */
-  const grow = async (from: { job: Job } | { seq: Sequence }, file: File, effect: string, direction: string): Promise<boolean> => {
+  const grow = async (from: { job: Job } | { seq: Sequence }, file: File, effect: string, direction: string, pick = ''): Promise<boolean> => {
     if (growLock.current) return false
     growLock.current = true
     setError(null)
     setGrowing(true)
     try {
       const up = await api.upload(file, 'mid')
-      const pool = presets.filter((p) => lengthsOf(p).includes(seconds))
+      const pool = presets.filter((p) => allowedLengths(p, pick, models).includes(seconds))
+      const source = pool.length ? pool : presets  // none at this length on this model: the length moves below
+      const chosen = effect === SURPRISE ? (source[Math.floor(Math.random() * source.length)]?.id ?? '') : effect
+      const allowed = allowedLengths(presets.find((p) => p.id === chosen), pick, models)
       const body = {
         shot: up.clip && up.first && up.last ? { clip: up.clip, first: up.first, last: up.last } : { image: up.id },
         segment: {
-          preset: effect === SURPRISE ? (pool[Math.floor(Math.random() * pool.length)]?.id ?? '') : effect,
-          seconds,
+          preset: chosen,
+          model: pick || undefined,
+          seconds: allowed.includes(seconds) ? seconds : allowed[0],
           prompt_extra: direction,  // this transition's own direction, not the Direction panel's
           seed: seed.trim() ? Number(seed) : undefined,
         },
@@ -1395,7 +1471,7 @@ export default function App() {
   }
   // effects offered next to the new shot: the ones qualified at the current length (Surprise me when there are several)
   const nextEffects = useMemo(() => {
-    const pool = presets.filter((p) => lengthsOf(p).includes(seconds)).map((p) => ({ id: p.id, name: p.name }))
+    const pool = presets.filter((p) => (p.seconds ?? [5]).includes(seconds)).map((p) => ({ id: p.id, name: p.name, model: p.model }))
     return pool.length > 1 ? [...pool, { id: SURPRISE, name: 'Surprise me' }] : pool
   }, [presets, seconds])
   // the Effect node's pick, else the effect the story used last, else none (the user picks it next to the shot)
@@ -1419,6 +1495,7 @@ export default function App() {
         image_a: a.id,
         image_b: b.id,
         preset: pick,
+        model: modelPick || undefined,
         seconds,
         clip_a: a.clip,
         clip_b: b.clip,
@@ -1467,6 +1544,7 @@ export default function App() {
     setA({ id: job.params.image_a, url: uploadUrl(job.params.image_a), width: 0, height: 0, ...clip(job.params.clip_a) })
     setB({ id: job.params.image_b, url: uploadUrl(job.params.image_b), width: 0, height: 0, ...clip(job.params.clip_b) })
     setPreset(job.params.preset)
+    setModelPick(job.params.model && job.params.model !== presets.find((p) => p.id === job.params.preset)?.model ? job.params.model : '')
     setSeconds(job.params.seconds ?? 5)
     for (const side of ['a', 'b'] as const) {
       const upload = job.params[`image_${side}`]
@@ -1485,6 +1563,7 @@ export default function App() {
   const videoUrl = focus && (showFull && focus.merged_url ? focus.merged_url : focus.output_url)
 
   return (
+    <ModelsContext.Provider value={models}>
     <div className="app" ref={root}>
       <header className="top">
         <a className="brand" href="/" aria-label="Seam home">
@@ -1608,7 +1687,7 @@ export default function App() {
                     ) : null}
                   </span>
                   <span className="effect-name">{p.name}</span>
-                  <span className="effect-meta">{MODEL_LABEL[p.model ?? ''] ?? ''}</span>
+                  <span className="effect-meta">{models.find((m) => m.id === modelPick)?.label ?? MODEL_LABEL[p.model ?? ''] ?? ''}</span>
                 </button>
               ))}
             </div>
@@ -1632,6 +1711,7 @@ export default function App() {
                 </div>
               </div>
             )}
+            <ModelSelect value={modelPick} onChange={setModelPick} effectModel={preset === SURPRISE ? undefined : current?.model} />
           </Node>
           <Node wire="direction" title="Direction" socket="text" meta="Optional" className="direction">
             {mode === 'seq' && (
@@ -1776,7 +1856,7 @@ export default function App() {
                 effects={nextEffects}
                 defaultEffect={nextDefault(fseqTakes[fseqTakes.length - 1]?.params.preset)}
                 seconds={seconds}
-                onMake={(f, fx, dir) => grow({ seq: fseq }, f, fx, dir)}
+                onMake={(f, fx, dir, m) => grow({ seq: fseq }, f, fx, dir, m)}
               />
             )}
             <footer className="out-bar">
@@ -1859,7 +1939,8 @@ export default function App() {
               <footer className="out-bar">
                 <span className="out-meta">
                   <span className="tag">{presetName(focus.params.preset)}</span>
-                  <span>{MODEL_LABEL[focus.params.model ?? ''] ?? focus.params.model}</span>
+                  <span>{models.find((m) => m.id === focus.params.model)?.label ?? MODEL_LABEL[focus.params.model ?? ''] ?? focus.params.model}</span>
+                  {focus.params.model !== presets.find((p) => p.id === focus.params.preset)?.model && <span>Not reviewed with this effect</span>}
                   <span>Seed {focus.params.seed}</span>
                 </span>
                 <span className="out-actions">
@@ -1902,7 +1983,7 @@ export default function App() {
           {!fseq && focusDone && focus && !focus.extra.sequence_id && (
             <NextShot key={focus.id} label="Continue with a new shot" fromUrl={uploadUrl(focus.params.image_b)} busy={growing}
               effects={nextEffects} defaultEffect={nextDefault(focus.params.preset)} seconds={seconds}
-              onMake={(f, fx, dir) => grow({ job: focus }, f, fx, dir)} />
+              onMake={(f, fx, dir, m) => grow({ job: focus }, f, fx, dir, m)} />
           )}
 
           <History jobs={jobs} seqs={seqs} focusId={focusId} presets={presets} onOpen={reuse} onOpenSeq={openSeq} onRetry={(j) => refine(j)} />
@@ -1921,5 +2002,6 @@ export default function App() {
         </Suspense>
       )}
     </div>
+    </ModelsContext.Provider>
   )
 }

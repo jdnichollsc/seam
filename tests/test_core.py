@@ -124,8 +124,9 @@ def test_settings_defaults_are_local_only() -> None:
 def test_research_models_are_not_shipped() -> None:
     import json
     shipped = json.loads((WF / "slots.json").read_text(encoding="utf-8"))
-    assert {k for k in shipped if not k.startswith("_")} == {"l25", "l23", "describe"}
-    assert not any(f.name.startswith(("h3", "wan")) for f in WF.glob("*.api.json") if f.name != "wan22_flf2v.api.json")
+    assert {k for k in shipped if not k.startswith("_")} == {"l25", "l23", "describe", "wan22", "minimax_h3", "kling_v3",
+                                                             "seedance_25"}
+    assert not any(f.name.startswith("h3") for f in WF.glob("*.api.json"))
 
 
 def test_review_sheet_has_whole_clip_and_middle_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,7 +143,7 @@ def test_review_sheet_has_whole_clip_and_middle_rows(tmp_path: Path, monkeypatch
     out = media.review_sheet(clip, tmp_path / "sheet2.png", n=8, height=60)
     with Image.open(out) as im:
         assert im.height == 120 and im.width == 8 * 100  # 160x96 scaled to height 60 -> 100 wide
-    assert seen[0] == 0 and seen[7] == pytest.approx(3.95)  # row 1: whole clip
+    assert seen[0] == 0 and seen[7] == pytest.approx(4 - 1.5 / 24)  # row 1: whole clip
     assert seen[8] == pytest.approx(1.2) and seen[15] == pytest.approx(2.8)  # row 2: 30%..70%
     assert not (tmp_path / "sheet2.tmp.png").exists()
 

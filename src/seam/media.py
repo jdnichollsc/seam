@@ -83,7 +83,8 @@ def frame_at(video: Path, t: float, height: int | None = None) -> Image.Image:
 def contact_sheet(video: Path, dst: Path, n: int = 8, height: int = 220, cols: int | None = None) -> Path:
     """n frames across the whole video, in rows of `cols` (default: one row)."""
     info = probe(video)
-    frames = [frame_at(video, min(info.duration * i / (n - 1), info.duration - 0.05), height) for i in range(n)]
+    frames = [frame_at(video, min(info.duration * i / (n - 1), info.duration - 1.5 / info.fps), height)
+              for i in range(n)]  # 1.5 frames before the end: seeking past the last frame returns nothing
     cols = cols or n
     w = frames[0].width
     sheet = Image.new("RGB", (w * cols, height * -(-n // cols)))
@@ -96,7 +97,7 @@ def contact_sheet(video: Path, dst: Path, n: int = 8, height: int = 220, cols: i
 def review_sheet(video: Path, dst: Path, n: int = 8, height: int = 220, middle: tuple[float, float] = (0.3, 0.7)) -> Path:
     """Two rows: row 1 spans the whole clip, row 2 samples 30-70% of it, where the effect does its work."""
     info = probe(video)
-    last = info.duration - 0.05
+    last = info.duration - 1.5 / info.fps
     lo, hi = middle
     times = [min(info.duration * i / (n - 1), last) for i in range(n)]
     times += [min(info.duration * (lo + (hi - lo) * i / (n - 1)), last) for i in range(n)]

@@ -19,6 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     mk.add_argument("image_a", type=Path)
     mk.add_argument("image_b", type=Path)
     mk.add_argument("--preset", required=True, help="a preset id from `seam presets`")
+    mk.add_argument("--model", help="an id from `seam models` (default: the effect's own model)")
     mk.add_argument("--seed", type=int)
     mk.add_argument("--seconds", type=int, default=5, help="take length; `seam presets` lists each effect's lengths")
     mk.add_argument("--extra", default="", help="text appended to the preset prompt")
@@ -29,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     sm.add_argument("shots", type=Path, nargs="+", help="2-8 images or 1-6 s clips, in order")
     sm.add_argument("--preset", required=True, help="one effect for every hand-off, or one per hand-off: smoke,ink")
     sm.add_argument("--seconds", default="5", help="one length, or one per hand-off: 5,10")
+    sm.add_argument("--model", default="", help="one id from `seam models`, or one per hand-off: l25,kling_v3 (empty: the effect's own)")
     sm.add_argument("--seed", type=int, help="seed for every segment (default: random per segment)")
     sm.add_argument("--story", default="", help="the idea of the whole film, shared by every transition")
     sm.add_argument("-o", "--out", type=Path, default=Path("seam_sequence.mp4"))
@@ -39,13 +41,14 @@ def main(argv: list[str] | None = None) -> int:
         g.add_argument("shot", type=Path, help="the next shot: an image or a 1-6 s clip")
         g.add_argument("--preset", required=True, help="the effect into the new shot")
         g.add_argument("--seconds", type=int, default=5)
+        g.add_argument("--model", help="an id from `seam models` (default: the effect's own model)")
         g.add_argument("--seed", type=int)
         g.add_argument("--extra", default="", help="text appended to the preset prompt")
         g.add_argument("-o", "--out", type=Path, default=Path("seam_sequence.mp4"))
     se = sqs.add_parser("edit", help="remove / reorder shots and set the story; only new hand-offs render")
     se.add_argument("id")
     se.add_argument("--order", help="current shot numbers in the new order, e.g. 1,3,2,4 (leave one out to remove it)")
-    se.add_argument("--transition", action="append", default=[], metavar="N=PRESET[:SECONDS]",
+    se.add_argument("--transition", action="append", default=[], metavar="N=PRESET[:SECONDS[:MODEL]]",
                     help="effect for transition N of the NEW order; needed for every new hand-off (repeatable)")
     se.add_argument("--extra", action="append", default=[], metavar="N=TEXT", help="direction for transition N")
     se.add_argument("--story", help="the idea of the whole film ('' clears it)")
@@ -57,9 +60,11 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("segment", type=int, help="1-based")
     sr.add_argument("--preset")
     sr.add_argument("--seconds", type=int)
+    sr.add_argument("--model", help="an id from `seam models` ('' returns to the effect's own model)")
     sr.add_argument("--seed", type=int)
     sr.add_argument("--extra", help="text appended to the preset prompt")
     sr.add_argument("-o", "--out", type=Path, default=Path("seam_sequence.mp4"))
+    sub.add_parser("models", help="the models a transition can pick, and which can render on the current backend")
     sub.add_parser("mcp", help="run the MCP server (stdio) — talks to a running `seam serve`")
     bk = sub.add_parser("backend", help="where takes render: this machine or Comfy Cloud")
     bk.add_argument("use", nargs="?", choices=["local", "cloud"], help="switch (omit to show the current one)")
@@ -92,6 +97,18 @@ def main(argv: list[str] | None = None) -> int:
     from .presets import load_presets
 
     settings = get_settings()
+    if args.cmd == "models":
+        from . import backend as backends
+        from . import models as model_status
+        from .workflows import load_catalog
+
+        backend = backends.current(settings)[0]
+        print(f"on {'Comfy Cloud' if backend == backends.CLOUD else 'this machine'} (default: each effect's own model)")
+        for m in model_status.listing(settings, load_catalog(settings.workflows_dir), backend):
+            state = {True: "ready", False: f"unavailable: {m['reason']}", None: "not checked"}[m["available"]]
+            paid = ", partner: uses credits" if m["kind"] == "partner" else ""
+            print(f"  {m['id']:<12} {m['label']} ({state}{paid})")
+        return 0
     if args.cmd == "presets":
         from .engine import Engine
 
@@ -115,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     job = engine.submit(TransitionRequest(image_a=str(store_upload(settings, args.image_a)),
                                           image_b=str(store_upload(settings, args.image_b)),
                                           preset=args.preset, seconds=args.seconds, seed=args.seed,
-                                          prompt_extra=args.extra))
+                                          prompt_extra=args.extra, model=args.model))
     print(f"job {job.id} queued (preset={args.preset})", flush=True)
     last = -1.0
     while True:
@@ -210,7 +227,8 @@ def _sequence(args: argparse.Namespace) -> int:
         if not args.shot.is_file():
             raise SystemExit(f"file not found: {args.shot}")
         body = {"shot": upload(args.shot), "segment": {"preset": args.preset, "seconds": args.seconds,
-                                                       "seed": args.seed, "prompt_extra": args.extra}}
+                                                       "seed": args.seed, "prompt_extra": args.extra,
+                                                       "model": args.model}}
         path = f"/api/sequences/{args.id}/shots" if args.action == "extend" else f"/api/jobs/{args.job}/continue"
         seq = call("POST", path, json=body)
         print(f"sequence {seq['id']}: {len(seq['shots'])} shots, rendering the new transition", flush=True)
@@ -221,8 +239,9 @@ def _sequence(args: argparse.Namespace) -> int:
         transitions: dict[str, dict] = {}
         for t in args.transition:
             n, _, spec = t.partition("=")
-            preset, _, secs = spec.partition(":")
-            transitions[n] = {"preset": preset, **({"seconds": int(secs)} if secs else {})}
+            preset, _, rest = spec.partition(":")
+            secs, _, model = rest.partition(":")
+            transitions[n] = {"preset": preset, **({"seconds": int(secs)} if secs else {}), **({"model": model} if model else {})}
         for x in args.extra:
             n, _, text = x.partition("=")
             if n not in transitions:
@@ -236,17 +255,20 @@ def _sequence(args: argparse.Namespace) -> int:
             return 0
         return wait(seq)
     if args.action == "refine":
-        body = {"preset": args.preset, "seconds": args.seconds, "seed": args.seed, "prompt_extra": args.extra}
+        body = {"preset": args.preset, "seconds": args.seconds, "seed": args.seed, "prompt_extra": args.extra,
+                "model": args.model}
         return wait(call("POST", f"/api/sequences/{args.id}/segments/{args.segment}/refine", json=body))
     n = len(args.shots) - 1
     presets, lengths = args.preset.split(","), [int(x) for x in args.seconds.split(",")]
-    if len(presets) not in (1, n) or len(lengths) not in (1, n):
-        raise SystemExit(f"{len(args.shots)} shots: give one --preset/--seconds or {n} comma-separated values")
+    picks = args.model.split(",")
+    if len(presets) not in (1, n) or len(lengths) not in (1, n) or len(picks) not in (1, n):
+        raise SystemExit(f"{len(args.shots)} shots: give one --preset/--seconds/--model or {n} comma-separated values")
     missing = [str(p) for p in args.shots if not p.is_file()]
     if missing:
         raise SystemExit(f"file not found: {', '.join(missing)}")
     shots = [upload(path) for path in args.shots]
-    segments = [{"preset": presets[i % len(presets)], "seconds": lengths[i % len(lengths)], "seed": args.seed}
+    segments = [{"preset": presets[i % len(presets)], "seconds": lengths[i % len(lengths)], "seed": args.seed,
+                 "model": picks[i % len(picks)]}
                 for i in range(n)]
     seq = call("POST", "/api/sequences", json={"shots": shots, "segments": segments, "story": args.story})
     print(f"sequence {seq['id']} queued ({n} segments)", flush=True)

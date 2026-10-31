@@ -50,7 +50,7 @@ def test_only_launch_presets_are_exposed_by_default(engine: Engine, images, monk
 
 def test_unknown_model_is_rejected(engine: Engine, images) -> None:
     a, b = images
-    with pytest.raises(ValueError, match="not enabled"):
+    with pytest.raises(ValueError, match="unknown model"):
         engine.validate(TransitionRequest(a, b, "smoke", model="h3"))
 
 
@@ -64,12 +64,13 @@ def test_submit_pins_model_and_refine_follows_new_preset(engine: Engine, images)
     assert same.params["model"] == "l23" and same.params["seed"] != job.params["seed"]
 
 
-def test_launch_presets_are_locked_to_their_qualified_model(engine: Engine, images) -> None:
+def test_launch_presets_default_to_their_qualified_model(engine: Engine, images) -> None:
     a, b = images
     launch = [p for p in engine.presets.values() if p.status == "launch"]
     assert launch and all(p.model for p in launch)  # qualification is bound to a model, not to SEAM_MODEL
-    with pytest.raises(ValueError, match="qualified on model 'l25' only"):
-        engine.validate(TransitionRequest(a, b, "smoke", model="l23"))
+    engine.validate(TransitionRequest(a, b, "smoke", model="l23"))  # another model only when explicitly picked
+    assert engine.model_for(TransitionRequest(a, b, "smoke")) == "l25"
+    assert engine.model_for(TransitionRequest(a, b, "smoke", model="")) == "l25"
     engine.settings = replace(engine.settings, model="l23")  # a different default must not reroute a launch effect
     assert engine.model_for(TransitionRequest(a, b, "water_bend")) == "l25"
     engine.validate(TransitionRequest(a, b, "whip_pan"))
@@ -80,7 +81,7 @@ def test_launch_presets_offer_only_their_qualified_lengths(engine: Engine, image
     engine.presets["smoke"] = replace(engine.presets["smoke"], seconds=(5, 10))
     engine.presets["whip_pan"] = replace(engine.presets["whip_pan"], seconds=(5,))
     engine.validate(TransitionRequest(a, b, "smoke", seconds=10))
-    with pytest.raises(ValueError, match="qualified at 5 s only"):
+    with pytest.raises(ValueError, match="renders at 5 s only"):
         engine.validate(TransitionRequest(a, b, "whip_pan", seconds=10))
     with pytest.raises(ValueError, match="seconds must be one of"):
         engine.validate(TransitionRequest(a, b, "smoke", seconds=7))

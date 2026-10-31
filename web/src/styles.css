@@ -525,3 +525,8 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .next-direction { display: grid; gap: 4px; }
 .next-direction > span { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
 .next-direction textarea { font: inherit; color: var(--text); background: var(--ink-raise); border: 1.5px solid var(--line-strong); border-radius: var(--r-ctl); padding: 8px 10px; resize: vertical; }
+
+.model-pick { display: grid; gap: 6px; margin-top: 12px; }
+.model-pick select { width: 100%; }
+.length + .model-pick { margin-inline: 10px; }
+.board-link.is-new select + select { margin-top: 4px; }

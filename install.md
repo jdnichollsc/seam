@@ -84,7 +84,11 @@ Smoke test without the UI:
 ```bash
 uv run seam presets
 uv run seam make first.png last.png --preset smoke -o smoke.mp4
+uv run seam models                                                      # what this backend can render
+uv run seam make first.png last.png --preset smoke --model wan22 -o wan.mp4
 ```
+
+Leave `--model` out to use the effect's own model. Nothing is downloaded for you: Wan 2.2 needs its files in ComfyUI.
 
 ## 6. Use it from Claude (skill + MCP)
 
