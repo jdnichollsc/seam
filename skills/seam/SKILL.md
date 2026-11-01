@@ -110,6 +110,13 @@ and why.
 
 If two takes in a row fail the same way, suggest a different preset instead of a third take.
 
+## Stars and recipes
+
+`star_take` keeps a take the user liked; `save_recipe` names its settings and `list_recipes` brings them back. Pass a
+recipe's `preset`, `model`, `seconds` and `prompt_extra` to `create_transition` or a segment; leave `seed` out on new
+shots. Skip a recipe with a `problem` and say why. Deleting is not an agent tool: the user does it from the gallery,
+whose trash keeps things for 7 days.
+
 ## Rules
 
 - Only use images the user owns or generated; never put a real, identifiable person into a transition without

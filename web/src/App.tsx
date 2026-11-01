@@ -14,7 +14,9 @@ import {
   type ModelRow,
   type Job,
   type Preset,
+  type Recipe,
   type Sequence,
+  type Trash,
   type EditIn,
   type ShotFields,
   type Example,
@@ -81,6 +83,7 @@ const MOTION = '(prefers-reduced-motion: no-preference)'
 const REPO = 'https://github.com/jdnichollsc/seam'
 
 const SEQ_MAX = 8
+const STARRED = '__starred__'
 /** Two copies of one take (the live jobs feed, a sequence's REST snapshot): the later update wins. */
 const newer = (x?: Job | null, y?: Job | null) => (!x ? (y ?? undefined) : !y || x.updated_at >= y.updated_at ? x : y)
 const SEQ_ACTIVE = new Set(['running', 'assembling'])
@@ -116,6 +119,15 @@ function useLive() {
           setJobs((prev) => merge(prev, qs.flatMap((q) => q.takes ?? []).filter((t): t is Job => !!t)))
         })
         .catch(() => {})
+      // moved to the trash while this tab was disconnected: no later event will say so
+      api
+        .trash()
+        .then((t) => {
+          const gone = new Set([...t.jobs, ...t.sequences].map((x) => x.id))
+          setJobs((prev) => prev.filter((x) => !gone.has(x.id)))
+          setSeqs((prev) => prev.filter((x) => !gone.has(x.id)))
+        })
+        .catch(() => {})
     }
     return subscribe({
       job: (job) => setJobs((prev) => merge(prev, [job])),
@@ -124,7 +136,8 @@ function useLive() {
       open: load,  // first connect and every reconnect: nothing sent while disconnected is lost
     })
   }, [])
-  return { jobs, seqs, hydrate }
+  // a record in the trash arrives like any update: every open tab drops it, and a restore brings it back
+  return { jobs: jobs.filter((j) => !j.deleted_at), seqs: seqs.filter((q) => !q.deleted_at), hydrate }
 }
 
 /** "Add the next shot", in two steps like an editor's Extend: choose the shot, then check where it leaves from, the
@@ -447,6 +460,9 @@ const ICONS: Record<string, string> = {
   graph: 'M4 6h6v5H4zM14 13h6v5h-6zM10 8.5h2.5a2 2 0 0 1 2 2V13',
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6',
   close: 'M6 6l12 12M18 6 6 18',
+  star: 'M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z',
+  trash: 'M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13M10 11v5M14 11v5',
+  bookmark: 'M6 3h12v18l-6-4-6 4z',
   receipt: 'M7 3h10v18l-2.5-1.6L12 21l-2.5-1.6L7 21zM10 8h4M10 12h4',
   upload: 'M12 16V5m0 0-4.5 4.5M12 5l4.5 4.5M5 19h14',
   github: 'M9 19c-4 1.3-4-2-6-2.5m12 4.5v-3.4a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.6 4.6 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.7 11.7 0 0 0-6 0C6.6 2.6 5.6 2.9 5.6 2.9a4.3 4.3 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.2 9.3c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21',
@@ -899,17 +915,61 @@ type HistoryProps = {
   onOpen: (job: Job) => void
   onOpenSeq: (seq: Sequence) => void
   onRetry: (job: Job) => void
+  onSaved: () => void
 }
 
-function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: HistoryProps) {
+/** What was just moved to the trash, with the way back. */
+type Undo = { label: string; restore: () => Promise<unknown> }
+
+function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry, onSaved }: HistoryProps) {
   const [filter, setFilter] = useState('all')
+  const [undo, setUndo] = useState<Undo | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [naming, setNaming] = useState<string | null>(null)  // the take being saved as a recipe
+  const [name, setName] = useState('')
+  const [trashTick, setTrashTick] = useState(0)
+  const attempt = async (action: () => Promise<unknown>) => {
+    setProblem(null)
+    try {
+      await action()
+    } catch (e) {
+      setProblem((e as Error).message)
+    }
+  }
+  const trashTake = (j: Job) => attempt(async () => {
+    await api.trashJob(j.id)
+    setUndo({ label: 'Take moved to the trash.', restore: () => api.restoreJob(j.id) })
+    setTrashTick((n) => n + 1)
+  })
+  const trashSeq = (q: Sequence) => attempt(async () => {
+    await api.trashSequence(q.id)
+    setUndo({ label: 'Sequence and its takes moved to the trash. Starred takes stay.', restore: () => api.restoreSequence(q.id) })
+    setTrashTick((n) => n + 1)
+  })
+  const saveRecipe = (j: Job) => attempt(async () => {
+    await api.saveRecipe(j.id, name.trim())
+    setNaming(null)
+    setName('')
+    onSaved()
+  })
   const preset = (id: string) => presets.find((p) => p.id === id)
   const effects = Array.from(new Set(jobs.map((j) => j.params.preset)))
-  const shown = jobs.filter((j) => filter === 'all' || j.params.preset === filter)
-
+  const shown = jobs.filter((j) => filter === 'all' || (filter === STARRED ? j.starred : j.params.preset === filter))
+  const inSequence = new Set(seqs.flatMap((q) => q.segments))
 
   return (
     <section className="history" aria-label="Your transitions">
+      {problem && <p className="history-note is-error" role="alert">{problem}</p>}
+      {undo && (
+        <p className="history-note" role="status">
+          {undo.label}{' '}
+          <button className="link-btn" onClick={() => attempt(async () => {
+            await undo.restore()
+            setUndo(null)
+            setTrashTick((n) => n + 1)
+          })}>Undo</button>
+        </p>
+      )}
       {seqs.length > 0 && (
         <>
           <div className="history-head">
@@ -949,6 +1009,11 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
                           <Icon name="download" />
                         </a>
                       )}
+                      {!SEQ_ACTIVE.has(q.status) && (
+                        <button className="btn-icon" title="Move to the trash, with its takes" aria-label="Move sequence to the trash" onClick={() => trashSeq(q)}>
+                          <Icon name="trash" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 </li>
@@ -966,10 +1031,12 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
       ) : (
         <>
           <div className="filters" role="tablist" aria-label="Filter by effect">
-            {['all', ...effects].map((f) => (
+            {['all', STARRED, ...effects].map((f) => (
               <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)}>
-                {f === 'all' ? 'All' : (preset(f)?.name ?? f)}
-                <span className="count">{f === 'all' ? jobs.length : jobs.filter((j) => j.params.preset === f).length}</span>
+                {f === 'all' ? 'All' : f === STARRED ? 'Starred' : (preset(f)?.name ?? f)}
+                <span className="count">
+                  {f === 'all' ? jobs.length : f === STARRED ? jobs.filter((j) => j.starred).length : jobs.filter((j) => j.params.preset === f).length}
+                </span>
               </button>
             ))}
           </div>
@@ -1014,6 +1081,23 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
                       <button className="btn btn-quiet" onClick={() => (retry ? onRetry(j) : onOpen(j))}>
                         {retry ? 'Try again' : 'Open'}
                       </button>
+                      <button className={`btn-icon${j.starred ? ' is-on' : ''}`} aria-pressed={!!j.starred}
+                        title={j.starred ? 'Remove the star' : 'Star: stays when its sequence goes to the trash'}
+                        aria-label={j.starred ? 'Remove the star' : 'Star this take'}
+                        onClick={() => attempt(() => api.star(j.id, !j.starred))}>
+                        <Icon name="star" />
+                      </button>
+                      {done && (
+                        <button className="btn-icon" title="Save these settings as a recipe" aria-label="Save as a recipe"
+                          onClick={() => { setNaming(naming === j.id ? null : j.id); setName(name || p?.name || '') }}>
+                          <Icon name="bookmark" />
+                        </button>
+                      )}
+                      {!ACTIVE.has(j.status) && !inSequence.has(j.id) && (
+                        <button className="btn-icon" title="Move to the trash" aria-label="Move take to the trash" onClick={() => trashTake(j)}>
+                          <Icon name="trash" />
+                        </button>
+                      )}
                       {done && (
                         <>
                           <a className="btn-icon" href={receiptUrl(j.id)} target="_blank" rel="noreferrer" title="How it was made" aria-label="How it was made">
@@ -1028,6 +1112,12 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
                         </>
                       )}
                     </div>
+                    {naming === j.id && (
+                      <form className="recipe-name" onSubmit={(e) => { e.preventDefault(); if (name.trim()) void saveRecipe(j) }}>
+                        <input aria-label="Recipe name" maxLength={80} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
+                        <button className="btn btn-quiet" disabled={!name.trim()}>Save</button>
+                      </form>
+                    )}
                   </div>
                 </li>
               )
@@ -1035,7 +1125,104 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
           </ol>
         </>
       )}
+      <TrashShelf tick={trashTick} />
     </section>
+  )
+}
+
+/** Saved settings of takes that came out well: the form takes them, the shots stay the user's. */
+function RecipeShelf({ recipes, presets, onUse, onRemove }: {
+  recipes: Recipe[]
+  presets: Preset[]
+  onUse: (r: Recipe) => void
+  onRemove: (r: Recipe) => void
+}) {
+  const models = useContext(ModelsContext)
+  if (recipes.length === 0) return null
+  return (
+    <section className="recipes" aria-label="Your recipes">
+      <div className="history-head">
+        <h2>Your recipes</h2>
+        <span className="total" aria-label={`${recipes.length} recipes`}>{recipes.length}</span>
+      </div>
+      <ol className="recipe-list">
+        {recipes.map((r) => (
+          <li key={r.id} className="recipe">
+            {r.poster_url ? <img src={r.poster_url} alt="" /> : <span className="recipe-blank" />}
+            <div className="recipe-body">
+              <strong>{r.name}</strong>
+              <span>
+                {presets.find((x) => x.id === r.preset)?.name ?? r.preset} · {models.find((m) => m.id === r.model)?.label ?? MODEL_LABEL[r.model] ?? r.model} · {r.seconds} s
+              </span>
+              {r.prompt_extra && <span className="recipe-extra">{r.prompt_extra}</span>}
+              {r.problem && <span className="recipe-problem">{r.problem}</span>}
+            </div>
+            <button className="btn btn-quiet" disabled={!!r.problem} onClick={() => onUse(r)}>Use</button>
+            <button className="btn-icon" title="Remove this recipe" aria-label={`Remove recipe ${r.name}`} onClick={() => onRemove(r)}>
+              <Icon name="close" />
+            </button>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+/** The trash: restore anything for a while; emptying it asks twice, in place. */
+function TrashShelf({ tick }: { tick: number }) {
+  const [trash, setTrash] = useState<Trash | null>(null)
+  const [sure, setSure] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  const load = useCallback(() => api.trash().then(setTrash).catch((e) => setNote((e as Error).message)), [])
+  useEffect(() => { void load() }, [load, tick])
+  const run = async (action: () => Promise<unknown>) => {
+    setNote(null)
+    try {
+      await action()
+    } catch (e) {
+      setNote((e as Error).message)
+    }
+    await load()
+  }
+  if (!trash || trash.jobs.length + trash.sequences.length === 0) return null
+  const count = trash.jobs.length + trash.sequences.length
+  // takes that left with a sequence come back with it, while it is here to bring them
+  const loose = trash.jobs.filter((j) => !trash.sequences.some((q) => q.id === j.extra.trashed_with))
+  return (
+    <details className="trash">
+      <summary>Trash <span className="count">{count}</span></summary>
+      <p className="trash-note">Kept for {trash.days} days, then deleted from this machine. Your shots and anything on Comfy Cloud stay.</p>
+      {note && <p className="history-note is-error" role="alert">{note}</p>}
+      <ul className="trash-list">
+        {trash.sequences.map((q) => (
+          <li key={q.id}>
+            {q.poster_url ? <img src={q.poster_url} alt="" /> : <span className="recipe-blank" />}
+            <span>Sequence · {q.shots.length} shots</span>
+            <button className="btn btn-quiet" onClick={() => run(() => api.restoreSequence(q.id))}>Restore</button>
+          </li>
+        ))}
+        {loose.map((j) => (
+          <li key={j.id}>
+            {j.poster_url ? <img src={j.poster_url} alt="" /> : <span className="recipe-blank" />}
+            <span>{j.params.preset} · seed {j.params.seed}</span>
+            <button className="btn btn-quiet" onClick={() => run(() => api.restoreJob(j.id))}>Restore</button>
+          </li>
+        ))}
+      </ul>
+      {sure ? (
+        <p className="trash-note">
+          This deletes them from disk and cannot be undone.{' '}
+          <button className="link-btn is-danger" onClick={() => run(async () => {
+            const { kept } = await api.emptyTrash()
+            setSure(false)
+            if (kept) setNote(`${kept} could not be deleted yet (still in use). Try again in a moment.`)
+          })}>Delete now</button>{' '}
+          <button className="link-btn" onClick={() => setSure(false)}>Keep them</button>
+        </p>
+      ) : (
+        <button className="btn btn-quiet" onClick={() => setSure(true)}>Empty trash</button>
+      )}
+    </details>
   )
 }
 
@@ -1179,6 +1366,9 @@ export default function App() {
   const [showFull, setShowFull] = useState(true)
   const [notes, setNotes] = useState<{ a: Note | null; b: Note | null }>({ a: null, b: null })
   const { jobs, seqs, hydrate } = useLive()
+  const [recipes, setRecipes] = useState<Recipe[]>([])
+  const loadRecipes = useCallback(() => { api.recipes().then(setRecipes).catch(() => {}) }, [])
+  useEffect(loadRecipes, [loadRecipes])
   const [growing, setGrowing] = useState(false)
   const growLock = useRef(false)  // state updates lag a fast second drop; this does not
   const [story, setStory] = useState('')  // sequence mode: the idea of the whole film
@@ -1557,6 +1747,17 @@ export default function App() {
     setMode('pair')
     setFocusSeqId(null)
     setFocusId(job.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  /** A recipe sets the form, never the shots. Its seed stays out: a seed only repeats a take on the same shots. */
+  const applyRecipe = (r: Recipe) => {
+    setPreset(r.preset)
+    setModelPick(r.model !== presets.find((p) => p.id === r.preset)?.model ? r.model : '')
+    setSeconds(r.seconds)
+    setExtra(r.prompt_extra)
+    setSeed('')
+    setMode('pair')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1986,7 +2187,9 @@ export default function App() {
               onMake={(f, fx, dir, m) => grow({ job: focus }, f, fx, dir, m)} />
           )}
 
-          <History jobs={jobs} seqs={seqs} focusId={focusId} presets={presets} onOpen={reuse} onOpenSeq={openSeq} onRetry={(j) => refine(j)} />
+          <RecipeShelf recipes={recipes} presets={presets} onUse={applyRecipe}
+            onRemove={(r) => { api.deleteRecipe(r.id).then(loadRecipes).catch((e) => setError((e as Error).message)) }} />
+          <History onSaved={loadRecipes} jobs={jobs} seqs={seqs} focusId={focusId} presets={presets} onOpen={reuse} onOpenSeq={openSeq} onRetry={(j) => refine(j)} />
         </main>
       </div>
       <Wires root={root} running={running} />

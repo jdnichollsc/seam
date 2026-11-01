@@ -312,6 +312,26 @@ async def cancel_sequence(sequence_id: str) -> dict[str, Any]:
     return _seq_brief(await _req("POST", f"/api/sequences/{sequence_id}/cancel"))
 
 
+@server.tool()
+async def star_take(job_id: str, starred: bool = True) -> dict[str, Any]:
+    """Star a take the user liked, or unstar it. A starred take stays when its sequence goes to the trash."""
+    return _brief(await _req("POST", f"/api/jobs/{job_id}/star", json={"starred": starred}))
+
+
+@server.tool()
+async def list_recipes() -> list[dict[str, Any]]:
+    """Saved settings to use again: pass preset, model, seconds and prompt_extra to create_transition or a segment.
+    A recipe with a `problem` can no longer render. `seed` only repeats a take on the same shots, so leave it out
+    on new ones."""
+    return await _req("GET", "/api/recipes")
+
+
+@server.tool()
+async def save_recipe(job_id: str, name: str) -> dict[str, Any]:
+    """Save a finished take's settings under a name, when the user asks to keep how it was made."""
+    return await _req("POST", "/api/recipes", json={"job_id": job_id, "name": name})
+
+
 def main() -> None:
     server.run("stdio")
 

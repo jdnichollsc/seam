@@ -328,8 +328,31 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
 }
 .card.is-failed .card-caption, .card.is-interrupted .card-caption { color: var(--danger); }
-.card-actions { display: flex; gap: 6px; margin-top: 2px; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
 .card-actions .btn { flex: 1; }
+.btn-icon.is-on { color: var(--yellow); }
+.btn-icon.is-on .icon path { fill: currentColor; }
+
+/* Recipes and the trash */
+.history-note { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
+.history-note.is-error { color: var(--danger); }
+.link-btn { padding: 0; border: 0; background: none; color: var(--yellow); font: inherit; text-decoration: underline; cursor: pointer; }
+.link-btn.is-danger { color: var(--danger); }
+.recipe-name { display: flex; gap: 6px; margin-top: 8px; }
+.recipe-name input { flex: 1; min-width: 0; }
+.recipes { margin-bottom: 32px; }
+.recipe-list, .trash-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.recipe, .trash-list li { display: flex; align-items: center; gap: 12px; }
+.recipe img, .trash-list img, .recipe-blank { flex: none; width: 72px; height: 40px; border-radius: 4px; object-fit: cover; background: rgba(255, 255, 255, 0.06); }
+.recipe-body { display: flex; flex: 1; flex-direction: column; min-width: 0; color: var(--muted); font-size: 14px; }
+.recipe-body strong { color: var(--text); }
+.recipe-extra { overflow: hidden; color: var(--dim); text-overflow: ellipsis; white-space: nowrap; }
+.recipe-problem { color: var(--danger); }
+.trash { margin-top: 32px; color: var(--muted); }
+.trash summary { cursor: pointer; }
+.trash-note { margin: 12px 0; font-size: 14px; }
+.trash-list { margin-bottom: 12px; }
+.trash-list span:not(.recipe-blank) { flex: 1; min-width: 0; }
 
 /* Narrow screens: rail above canvas -------------------------------------------------------- */
 @media (max-width: 960px) {

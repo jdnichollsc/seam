@@ -25,7 +25,7 @@ from . import media, receipt
 from . import backend as backends
 from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
-from .engine import Engine, SequenceBusy, TransitionRequest, store_clip, store_upload
+from .engine import TRASH_DAYS, Engine, SequenceBusy, TakeInUse, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
 
 settings = get_settings()
@@ -435,7 +435,7 @@ async def review_sheet(job_id: str) -> FileResponse:
     """Two-row contact sheet for judging a take (whole clip + its middle), built on first request and cached,
     so takes rendered before this existed get one too."""
     job = _engine().store.get(job_id)
-    if job is None:
+    if job is None or job.deleted_at:
         raise HTTPException(404, "job not found")
     if job.status != "succeeded" or not job.output:
         raise HTTPException(409, f"job {job_id} is {job.status}, no preview yet")
@@ -515,7 +515,7 @@ def _sequence(seq_id: str):
     if not SEQ_ID.match(seq_id):
         raise HTTPException(400, "invalid sequence id")
     seq = _engine().store.get_sequence(seq_id)
-    if seq is None:
+    if seq is None or seq.deleted_at:
         raise HTTPException(404, "sequence not found")
     return seq
 
@@ -614,6 +614,101 @@ def sequence_receipt(seq_id: str) -> dict[str, Any]:
     if seq.status != "succeeded":
         raise HTTPException(409, f"sequence {seq_id} is {seq.status}")
     return _engine().sequence_receipt(seq_id)
+
+
+class StarIn(BaseModel):
+    starred: bool = True
+
+
+class RecipeIn(BaseModel):
+    job_id: str
+    name: str = Field(min_length=1, max_length=80)
+
+
+def _trash_call(action: Any, record_id: str) -> Any:
+    try:
+        return action(record_id)
+    except KeyError as e:
+        raise HTTPException(404, "not found") from e
+    except (SequenceBusy, TakeInUse) as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/api/jobs/{job_id}/star")
+def star_job(job_id: str, body: StarIn) -> dict[str, Any]:
+    e = _engine()
+    if e.store.get(job_id) is None:
+        raise HTTPException(404, "job not found")
+    return _job_out(e.store.update(job_id, starred=body.starred))
+
+
+@app.post("/api/jobs/{job_id}/trash")
+def trash_job(job_id: str) -> dict[str, Any]:
+    return _job_out(_trash_call(_engine().trash_job, job_id))
+
+
+@app.post("/api/jobs/{job_id}/restore")
+def restore_job(job_id: str) -> dict[str, Any]:
+    return _job_out(_trash_call(_engine().restore_job, job_id))
+
+
+@app.post("/api/sequences/{seq_id}/trash")
+def trash_sequence(seq_id: str) -> dict[str, Any]:
+    return _seq_out(_trash_call(_engine().trash_sequence, seq_id))
+
+
+@app.post("/api/sequences/{seq_id}/restore")
+def restore_sequence(seq_id: str) -> dict[str, Any]:
+    return _seq_out(_trash_call(_engine().restore_sequence, seq_id))
+
+
+@app.get("/api/trash")
+def list_trash() -> dict[str, Any]:
+    e = _engine()
+    e.purge_trash()
+    return {"days": TRASH_DAYS, "jobs": [_job_out(j) for j in e.store.list(limit=200, trashed=True)],
+            "sequences": [_seq_out(s, jobs=False) for s in e.store.list_sequences(limit=100, trashed=True)]}
+
+
+@app.delete("/api/trash")
+def empty_trash() -> dict[str, int]:
+    """Takes and sequences leave the disk now. `kept`: still being written or open, the next purge takes them."""
+    return _engine().purge_trash(everything=True)
+
+
+def _recipe_out(rec: Any) -> dict[str, Any]:
+    e = _engine()
+    d = rec.public()
+    source = e.store.get(rec.source_job)
+    if source and source.poster and (settings.outputs_dir / source.poster).is_file():
+        d["poster_url"] = f"/outputs/{source.poster}"
+    d["problem"] = e.recipe_problem(rec.preset, rec.model, rec.seconds)
+    return d
+
+
+@app.get("/api/recipes")
+def list_recipes() -> list[dict[str, Any]]:
+    return [_recipe_out(r) for r in _engine().store.list_recipes()]
+
+
+@app.post("/api/recipes", status_code=201)
+def create_recipe(body: RecipeIn) -> dict[str, Any]:
+    e = _engine()
+    job = e.store.get(body.job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.status != "succeeded":
+        raise HTTPException(409, f"take {job.id} is {job.status}; save a finished take")
+    p = job.params
+    return _recipe_out(e.store.create_recipe(
+        name=body.name.strip(), preset=p["preset"], model=p.get("model") or e.settings.model,
+        seconds=p.get("seconds", 5), prompt_extra=p.get("prompt_extra", ""), seed=p.get("seed"), source_job=job.id))
+
+
+@app.delete("/api/recipes/{recipe_id}", status_code=204)
+def delete_recipe(recipe_id: str) -> None:
+    if not _engine().store.delete_recipe(recipe_id):
+        raise HTTPException(404, "recipe not found")
 
 
 @app.get("/api/events")

@@ -36,6 +36,7 @@ model runs on your machine and every take can be reopened, inspected and re-run 
   its own; the others are reused. Or grow a story shot by shot: **Continue** a finished two-shot take with a new
   shot, then keep adding; only the new transition renders, and every transition starts from your own shot, so the
   story stays as consistent as the shots you bring.
+- **Keep what works**: star a take, save its settings as a recipe to use on other shots, and move what missed to a trash that keeps it for 7 days.
 - **CLI**: `seam make first.png last.png --preset smoke`, `seam sequence make 1.png 2.png 3.png --preset smoke,whip_pan`, then `seam sequence extend <id> 4.png --preset ink`, and `seam sequence edit <id> --order 1,3,2,4 --transition 1=ink --transition 2=melt --transition 3=smoke` to reorder (only the new hand-offs render).
 - **Agent plugin**: a skill + MCP server so Claude Code (or any MCP agent) can plan, render, review and refine
   transitions for you. Packaged as a Claude Code plugin and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin.

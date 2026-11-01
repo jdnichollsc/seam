@@ -32,6 +32,8 @@ class JobRecord:
     error: str | None = None
     wall_s: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    starred: bool = False
+    deleted_at: float | None = None  # in the trash since then; its files stay until the trash is purged
 
     def public(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,9 +55,33 @@ class SequenceRecord:
     sheet: str | None = None
     error: str | None = None
     story: str = ""              # the idea of the whole sequence; each take keeps the story it was made with
+    deleted_at: float | None = None
+    origin: str | None = None    # the finished take it was continued from; a new take may replace it in `segments`
 
     def public(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class RecipeRecord:
+    """How a take was made, to use again on other shots: the settings, never its prompt text (that describes its shots)."""
+    id: str
+    name: str
+    preset: str
+    model: str
+    seconds: int
+    prompt_extra: str
+    seed: int | None      # only repeats a take on the same shots
+    source_job: str
+    created_at: float
+    updated_at: float
+
+    def public(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _where(trashed: bool) -> str:
+    return f"WHERE json_extract(data, '$.deleted_at') IS {'NOT ' if trashed else ''}NULL"
 
 
 class JobStore:
@@ -66,6 +92,7 @@ class JobStore:
         with self._lock:
             self._db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.execute("CREATE TABLE IF NOT EXISTS sequences (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
+            self._db.execute("CREATE TABLE IF NOT EXISTS recipes (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.commit()
 
     # -- persistence ---------------------------------------------------------------------------
@@ -89,9 +116,10 @@ class JobStore:
             row = self._db.execute("SELECT data FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return JobRecord(**json.loads(row[0])) if row else None
 
-    def list(self, limit: int = 50) -> list[JobRecord]:
+    def list(self, limit: int = 50, trashed: bool = False) -> list[JobRecord]:
         with self._lock:
-            rows = self._db.execute("SELECT data FROM jobs ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._db.execute(f"SELECT data FROM jobs {_where(trashed)} ORDER BY created DESC LIMIT ?",
+                                    (limit,)).fetchall()
         return [JobRecord(**json.loads(r[0])) for r in rows]
 
     def update(self, job_id: str, **changes: Any) -> JobRecord:
@@ -127,9 +155,10 @@ class JobStore:
             row = self._db.execute("SELECT data FROM sequences WHERE id = ?", (seq_id,)).fetchone()
         return SequenceRecord(**json.loads(row[0])) if row else None
 
-    def list_sequences(self, limit: int = 50) -> list[SequenceRecord]:
+    def list_sequences(self, limit: int = 50, trashed: bool = False) -> list[SequenceRecord]:
         with self._lock:
-            rows = self._db.execute("SELECT data FROM sequences ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._db.execute(f"SELECT data FROM sequences {_where(trashed)} ORDER BY created DESC LIMIT ?",
+                                    (limit,)).fetchall()
         return [SequenceRecord(**json.loads(r[0])) for r in rows]
 
     def update_sequence(self, seq_id: str, **changes: Any) -> SequenceRecord:
@@ -143,6 +172,34 @@ class JobStore:
             self._save_sequence(seq)
         self._publish(seq)
         return seq
+
+    def remove(self, record_id: str) -> None:
+        """Forget a take or a sequence for good (the trash, once its files are gone)."""
+        with self._lock:
+            for table in ("jobs", "sequences"):
+                self._db.execute(f"DELETE FROM {table} WHERE id = ?", (record_id,))
+            self._db.commit()
+
+    # -- recipes -------------------------------------------------------------------------------
+    def create_recipe(self, **fields: Any) -> RecipeRecord:
+        now = time.time()
+        rec = RecipeRecord(id="r" + uuid.uuid4().hex[:11], created_at=now, updated_at=now, **fields)
+        with self._lock:
+            self._db.execute("INSERT INTO recipes (id, data, created) VALUES (?, ?, ?)",
+                             (rec.id, json.dumps(rec.public()), rec.created_at))
+            self._db.commit()
+        return rec
+
+    def list_recipes(self) -> list[RecipeRecord]:
+        with self._lock:
+            rows = self._db.execute("SELECT data FROM recipes ORDER BY created DESC").fetchall()
+        return [RecipeRecord(**json.loads(r[0])) for r in rows]
+
+    def delete_recipe(self, recipe_id: str) -> bool:
+        with self._lock:
+            gone = self._db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,)).rowcount
+            self._db.commit()
+        return bool(gone)
 
     def mark_interrupted(self) -> list[str]:
         """On startup: anything left queued/running by a previous process becomes 'interrupted'."""
