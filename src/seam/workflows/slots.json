@@ -134,6 +134,16 @@
       "cloud"
     ]
   },
+  "chat": {
+    "workflow": "chat.api.json",
+    "output_node": "4",
+    "slots": {
+      "prompt": [
+        "3",
+        "prompt"
+      ]
+    }
+  },
   "describe": {
     "workflow": "describe.api.json",
     "output_node": "4",

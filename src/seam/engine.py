@@ -41,6 +41,10 @@ class TakeInUse(ValueError):
     """A sequence still joins this take: it leaves through the sequence's storyboard."""
 
 
+class BackendChanged(ValueError):
+    """Takes no longer render where the user was told they would."""
+
+
 class SequenceBusy(ValueError):
     """The sequence is still rendering or joining: edits wait until it settles."""
 
@@ -176,12 +180,14 @@ class Engine:
             raise ValueError("width and height go together: multiples of 32 between 256 and 2048")
 
     def submit(self, req: TransitionRequest, parent_id: str | None = None, extra: dict[str, Any] | None = None,
-               enqueue: bool = True) -> JobRecord:
+               enqueue: bool = True, expected_backend: str | None = None) -> JobRecord:
         if req.seed is None:
             req.seed = random.randint(1, 2**31 - 1)
         self.validate(req)
         req.model = self.model_for(req)  # pin the resolved model on the job
         backend = backends.current(self.settings)[0]
+        if expected_backend and expected_backend != backend:  # this read is the one the job keeps: no gap for a switch
+            raise BackendChanged("The backend changed after that was offered; ask again.")
         self.client_for(backend)  # no Cloud key: refused here, before anything is queued
         # a take renders where it was asked to: a later switch never moves it, and a restart re-attaches to the same place
         job = self.store.create(req.to_params(), parent_id=parent_id, extra={**(extra or {}), "backend": backend})
@@ -190,7 +196,28 @@ class Engine:
         return job
 
     def refine(self, job_id: str, changes: dict[str, Any], extra: dict[str, Any] | None = None,
-               enqueue: bool = True) -> JobRecord:
+               enqueue: bool = True, expected_backend: str | None = None) -> JobRecord:
+        return self.submit(self._refined(job_id, changes), parent_id=job_id, extra=extra, enqueue=enqueue,
+                           expected_backend=expected_backend)
+
+    def preview_refine(self, job_id: str, changes: dict[str, Any]) -> TransitionRequest:
+        """What refine would render, validated and with its model resolved; nothing is queued."""
+        req = self._refined(job_id, changes)
+        self.validate(req)
+        req.model = self.model_for(req)
+        return req
+
+    def preview_segment(self, seq_id: str, index: int, changes: dict[str, Any]) -> TransitionRequest:
+        seq = self.store.get_sequence(seq_id)
+        if seq is None or seq.deleted_at:
+            raise KeyError(seq_id)
+        if seq.status in ("running", "assembling"):
+            raise SequenceBusy(f"sequence {seq_id} is {seq.status}; re-roll a segment once it settles")
+        if not 0 <= index < len(seq.segments):
+            raise ValueError(f"segment must be 1-{len(seq.segments)}")
+        return self.preview_refine(seq.segments[index], self._segment_changes(seq, changes))
+
+    def _refined(self, job_id: str, changes: dict[str, Any]) -> TransitionRequest:
         base = self.store.get(job_id)
         if base is None:
             raise KeyError(job_id)
@@ -211,7 +238,7 @@ class Engine:
         for side in ("a", "b"):  # a corrected description drops the old label, which may contradict it
             if changes.get(f"{side}_desc") is not None and changes.get(f"{side}_ref") is None:
                 params[f"{side}_ref"] = ""
-        return self.submit(TransitionRequest(**params), parent_id=job_id, extra=extra, enqueue=enqueue)
+        return TransitionRequest(**params)
 
     def cancel(self, job_id: str) -> JobRecord:
         job = self.store.get(job_id)
@@ -267,7 +294,14 @@ class Engine:
             self._queue.put(j.id)
         return seq
 
-    def refine_segment(self, seq_id: str, index: int, changes: dict[str, Any]) -> SequenceRecord:
+    @staticmethod
+    def _segment_changes(seq: SequenceRecord, changes: dict[str, Any]) -> dict[str, Any]:
+        return {**{k: v for k, v in changes.items() if k not in ("width", "height", "clip_a", "clip_b", "story")},
+                "width": seq.width, "height": seq.height, "clip_a": "", "clip_b": "",  # canvas stays, no clips
+                "story": seq.story}  # a new take uses the sequence's story as it is now
+
+    def refine_segment(self, seq_id: str, index: int, changes: dict[str, Any],
+                       expected_updated_at: float | None = None, expected_backend: str | None = None) -> SequenceRecord:
         """A new take of one segment (same rules as refine); the others are reused and the sequence joins again."""
         with self._seq_lock:
             seq = self.store.get_sequence(seq_id)
@@ -275,14 +309,12 @@ class Engine:
                 raise KeyError(seq_id)
             if seq.status in ("running", "assembling"):
                 raise SequenceBusy(f"sequence {seq_id} is {seq.status}; re-roll a segment once it settles")
+            if expected_updated_at is not None and abs(seq.updated_at - expected_updated_at) > 1e-6:
+                raise SequenceBusy("this sequence changed after that was offered; ask again")
             if not 0 <= index < len(seq.segments):
                 raise ValueError(f"segment must be 1-{len(seq.segments)}")
-            changes = {**{k: v for k, v in changes.items()
-                          if k not in ("width", "height", "clip_a", "clip_b", "story")},
-                       "width": seq.width, "height": seq.height, "clip_a": "", "clip_b": "",  # canvas stays, no clips
-                       "story": seq.story}  # a new take uses the sequence's story as it is now
-            job = self.refine(seq.segments[index], changes, extra={"sequence_id": seq.id, "segment": index},
-                              enqueue=False)
+            job = self.refine(seq.segments[index], self._segment_changes(seq, changes), extra={"sequence_id": seq.id, "segment": index},
+                              enqueue=False, expected_backend=expected_backend)
             segments = list(seq.segments)
             segments[index] = job.id
             seq = self.store.update_sequence(seq_id, segments=segments, status="running", error=None)
@@ -657,6 +689,12 @@ class Engine:
                     self.store.update(job.id, extra={k: v for k, v in job.extra.items()
                                                      if k not in ("sequence_id", "segment")})
         return {"removed": removed, "kept": kept}
+
+    def save_recipe(self, job: JobRecord, name: str) -> RecipeRecord:
+        p = job.params
+        return self.store.create_recipe(
+            name=name.strip(), preset=p["preset"], model=p.get("model") or self.settings.model,
+            seconds=p.get("seconds", 5), prompt_extra=p.get("prompt_extra", ""), seed=p.get("seed"), source_job=job.id)
 
     def recipe_problem(self, preset: str, model: str, seconds: int) -> str | None:
         """Why saved settings can no longer render, in words; None when they still can."""

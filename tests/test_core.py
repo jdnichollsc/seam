@@ -124,7 +124,7 @@ def test_settings_defaults_are_local_only() -> None:
 def test_research_models_are_not_shipped() -> None:
     import json
     shipped = json.loads((WF / "slots.json").read_text(encoding="utf-8"))
-    assert {k for k in shipped if not k.startswith("_")} == {"l25", "l23", "describe", "wan22", "minimax_h3", "kling_v3",
+    assert {k for k in shipped if not k.startswith("_")} == {"l25", "l23", "chat", "describe", "wan22", "minimax_h3", "kling_v3",
                                                              "seedance_25"}
     assert not any(f.name.startswith("h3") for f in WF.glob("*.api.json"))
 

@@ -13,7 +13,7 @@ from .presets import load_presets
 from .workflows import load_spec, missing_slots
 
 MODEL_EXT = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
-DOWNLOAD_SET = {"l25": "l25", "describe": "l25", "l23": "l23"}  # workflow → scripts/download_models.py --only <set>
+DOWNLOAD_SET = {"l25": "l25", "chat": "l25", "describe": "l25", "l23": "l23"}  # workflow → scripts/download_models.py --only <set>
 
 
 def model_files(graph: dict) -> list[tuple[str, str, str]]:

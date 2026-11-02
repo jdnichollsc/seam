@@ -110,6 +110,11 @@ and why.
 
 If two takes in a row fail the same way, suggest a different preset instead of a third take.
 
+## The chat in the web app
+
+The studio has its own helper for people without an agent. It is not an agent tool, and nothing here depends on it.
+Browsers with WebMCP get its reads and form tools; those change the form on the page and never render.
+
 ## Stars and recipes
 
 `star_take` keeps a take the user liked; `save_recipe` names its settings and `list_recipes` brings them back. Pass a

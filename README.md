@@ -36,6 +36,7 @@ model runs on your machine and every take can be reopened, inspected and re-run 
   its own; the others are reused. Or grow a story shot by shot: **Continue** a finished two-shot take with a new
   shot, then keep adding; only the new transition renders, and every transition starts from your own shot, so the
   story stays as consistent as the shots you bring.
+- **Ask the helper**: a chat on the local Gemma-4 E2B explains the app, knows what you have open, and prepares a new take you start with a click. It never renders or deletes by itself. It reads concrete requests best, like *transition 2 to Smoke at 10 seconds*; free phrasing often gets a question or a description instead. It runs on your GPU only.
 - **Keep what works**: star a take, save its settings as a recipe to use on other shots, and move what missed to a trash that keeps it for 7 days.
 - **CLI**: `seam make first.png last.png --preset smoke`, `seam sequence make 1.png 2.png 3.png --preset smoke,whip_pan`, then `seam sequence extend <id> 4.png --preset ink`, and `seam sequence edit <id> --order 1,3,2,4 --transition 1=ink --transition 2=melt --transition 3=smoke` to reorder (only the new hand-offs render).
 - **Agent plugin**: a skill + MCP server so Claude Code (or any MCP agent) can plan, render, review and refine
@@ -108,6 +109,9 @@ Render time runs from submit to finished video, including LTX-2.5's prompt enhan
 slowest takes were the first after a load). Reading the two shots (~1 s each, cached) comes on top. Peak VRAM was
 ~31 GB on a 32 GB card; 24 GB cards should work through ComfyUI's offloading (64 GB RAM) but are untested.
 The qualification record is [dev/PRESET_REVIEW.md](dev/PRESET_REVIEW.md).
+
+**Will it run on a DGX Spark?** The weights should fit in its 128 GB of unified memory, but nobody has tried it here,
+so its speed is unknown. Every number above comes from one RTX 5090.
 
 ## 3D models in
 
