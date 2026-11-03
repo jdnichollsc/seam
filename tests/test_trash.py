@@ -179,36 +179,6 @@ def test_a_file_still_open_keeps_the_record_for_the_next_purge(seam, monkeypatch
     assert e.store.get(job.id) is not None
 
 
-def test_a_recipe_keeps_the_settings_and_outlives_its_take(seam):
-    c, e = seam
-    job = _take(e)
-    e.store.update(job.id, params={**job.params, "prompt_override": "never saved"})
-    r = c.post("/api/recipes", json={"job_id": job.id, "name": " Slow whip "}).json()
-    assert (r["name"], r["preset"], r["seconds"], r["prompt_extra"], r["seed"]) == ("Slow whip", "whip_pan", 5, "slow", 7)
-    assert "prompt_override" not in r and r["problem"] is None and r["poster_url"].endswith(".jpg")
-    c.post(f"/api/jobs/{job.id}/trash")
-    c.delete("/api/trash")
-    kept = c.get("/api/recipes").json()
-    assert [x["id"] for x in kept] == [r["id"]] and "poster_url" not in kept[0]
-    assert c.delete(f"/api/recipes/{r['id']}").status_code == 204
-    assert c.delete(f"/api/recipes/{r['id']}").status_code == 404
-
-
-def test_a_recipe_says_when_it_can_no_longer_render(seam):
-    c, e = seam
-    job = _take(e)
-    rid = c.post("/api/recipes", json={"job_id": job.id, "name": "x"}).json()["id"]
-    e.presets.pop("whip_pan")
-    row = next(x for x in c.get("/api/recipes").json() if x["id"] == rid)
-    assert "no longer" in row["problem"]
-
-
-def test_only_a_finished_take_makes_a_recipe(seam):
-    c, e = seam
-    assert c.post("/api/recipes", json={"job_id": _take(e, status="failed").id, "name": "x"}).status_code == 409
-    assert c.post("/api/recipes", json={"job_id": "nope", "name": "x"}).status_code == 404
-
-
 def test_a_take_purged_before_the_worker_reaches_it_does_not_stop_the_worker(seam):
     c, e = seam
     gone = _take(e, status="cancelled")

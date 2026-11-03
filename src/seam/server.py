@@ -8,6 +8,7 @@ import json
 import re
 import tempfile
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -21,12 +22,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import media, receipt
+from . import media, receipt, shotgen
 from . import backend as backends
 from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
 from . import agent, catalog
-from .engine import TRASH_DAYS, BackendChanged, Engine, SequenceBusy, TakeInUse, TransitionRequest, store_clip, store_upload
+from .engine import TRASH_DAYS, BackendChanged, Engine, SequenceBusy, ShotsUnavailable, TakeInUse, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
 
 settings = get_settings()
@@ -359,8 +360,11 @@ async def upload(file: UploadFile = File(...), role: str = "a") -> dict[str, Any
         raise HTTPException(400, f"not a readable image: {e}") from e
     finally:
         Path(tmp.name).unlink(missing_ok=True)
-    from .media import image_size
-    w, h = image_size(stored)
+    return _upload_out(stored)
+
+
+def _upload_out(stored: Path) -> dict[str, Any]:
+    w, h = media.image_size(stored)
     return {"id": stored.name, "url": f"/uploads/{stored.name}", "width": w, "height": h}
 
 
@@ -538,6 +542,102 @@ def create_sequence(body: SequenceIn) -> dict[str, Any]:
         raise HTTPException(422, str(e)) from e
 
 
+class ShotCreateIn(BaseModel):
+    prompt: str = Field(min_length=1, max_length=shotgen.MAX_PROMPT)
+    aspect: str = "16:9"
+    quality: str = "standard"
+    count: int = 1
+    seed: int | None = Field(default=None, ge=0, le=2**53)
+    model: str = "shot"
+
+
+class ImageEditIn(BaseModel):
+    starred: bool | None = None
+    trashed: bool | None = None
+
+
+def _shot_out(shot: Any) -> dict[str, Any]:
+    d = shot if isinstance(shot, dict) else shot.public()
+    d.pop("comfy_job_id", None)
+    d.pop("submitting_at", None)
+    d["images"] = [{**i, "url": f"/outputs/shots/{i['name']}"} for i in d["images"]]
+    return d
+
+
+def _shot_call(action: Any) -> Any:
+    try:
+        return action()
+    except KeyError as e:
+        raise HTTPException(404, "shot not found") from e
+    except ShotsUnavailable as e:
+        raise HTTPException(409, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.get("/api/shots")
+def list_shots(limit: int = 200) -> dict[str, Any]:
+    e = _engine()
+    return {"shots": [_shot_out(s) for s in e.store.list_shots(limit=min(limit, 500))], "unavailable": e.shots_unavailable(), "models": e.shot_models()}
+
+
+@app.post("/api/shots", status_code=201)
+def create_shot(body: ShotCreateIn) -> dict[str, Any]:
+    return _shot_out(_shot_call(lambda: _engine().create_shot(**body.model_dump())))
+
+
+@app.post("/api/shots/purge")
+def purge_shots() -> dict[str, int]:
+    return {"removed": _engine().purge_shots(everything=True)}
+
+
+@app.get("/api/shots/{shot_id}")
+def get_shot(shot_id: str) -> dict[str, Any]:
+    return _shot_out(_shot_call(lambda: _engine()._shot(shot_id)))
+
+
+@app.post("/api/shots/{shot_id}/variations", status_code=201)
+def shot_variation(shot_id: str) -> dict[str, Any]:
+    return _shot_out(_shot_call(lambda: _engine().variation(shot_id)))
+
+
+@app.post("/api/shots/{shot_id}/cancel")
+def cancel_shot(shot_id: str) -> dict[str, Any]:
+    return _shot_out(_shot_call(lambda: _engine().cancel_shot(shot_id)))
+
+
+@app.delete("/api/shots/{shot_id}", status_code=204)
+def dismiss_shot(shot_id: str) -> None:
+    _shot_call(lambda: _engine().dismiss_shot(shot_id))
+
+
+@app.patch("/api/shots/{shot_id}/images/{name}")
+def edit_shot_image(shot_id: str, name: str, body: ImageEditIn) -> dict[str, Any]:
+    changes: dict[str, Any] = {}
+    if body.starred is not None:
+        changes["starred"] = body.starred
+    if body.trashed is not None:
+        changes["deleted_at"] = time.time() if body.trashed else None
+    return _shot_out(_shot_call(lambda: _engine().edit_image(shot_id, name, **changes)))
+
+
+@app.post("/api/shots/{shot_id}/images/{name}/use")
+def use_shot_image(shot_id: str, name: str) -> dict[str, Any]:
+    """The image as an ordinary upload: a copy, so transitions and sequences need no change and a trashed shot breaks nothing."""
+    return _upload_out(store_upload(settings, _shot_call(lambda: _engine().shot_image(shot_id, name))))
+
+
+@app.post("/api/rough-cut")
+def rough_cut(body: SequenceIn) -> dict[str, Any]:
+    """The order and pacing before anything renders: free on any backend. An empty `preset` is Surprise me."""
+    e = _engine()
+    try:
+        path = e.rough_cut([_shot_paths(s) for s in body.shots], [s.model_dump() for s in body.segments])
+    except ValueError as err:
+        raise HTTPException(422, str(err)) from err
+    return {"url": f"/outputs/rough/{path.name}", "seconds": media.probe(path).duration}
+
+
 @app.get("/api/sequences")
 def list_sequences(limit: int = 20) -> list[dict[str, Any]]:
     return [_seq_out(s) for s in _engine().store.list_sequences(limit=min(limit, 100))]
@@ -628,11 +728,6 @@ class StarIn(BaseModel):
     starred: bool = True
 
 
-class RecipeIn(BaseModel):
-    job_id: str
-    name: str = Field(min_length=1, max_length=80)
-
-
 def _trash_call(action: Any, record_id: str) -> Any:
     try:
         return action(record_id)
@@ -682,38 +777,6 @@ def list_trash() -> dict[str, Any]:
 def empty_trash() -> dict[str, int]:
     """Takes and sequences leave the disk now. `kept`: still being written or open, the next purge takes them."""
     return _engine().purge_trash(everything=True)
-
-
-def _recipe_out(rec: Any) -> dict[str, Any]:
-    e = _engine()
-    d = rec.public()
-    source = e.store.get(rec.source_job)
-    if source and source.poster and (settings.outputs_dir / source.poster).is_file():
-        d["poster_url"] = f"/outputs/{source.poster}"
-    d["problem"] = e.recipe_problem(rec.preset, rec.model, rec.seconds)
-    return d
-
-
-@app.get("/api/recipes")
-def list_recipes() -> list[dict[str, Any]]:
-    return [_recipe_out(r) for r in _engine().store.list_recipes()]
-
-
-@app.post("/api/recipes", status_code=201)
-def create_recipe(body: RecipeIn) -> dict[str, Any]:
-    e = _engine()
-    job = e.store.get(body.job_id)
-    if job is None:
-        raise HTTPException(404, "job not found")
-    if job.status != "succeeded":
-        raise HTTPException(409, f"take {job.id} is {job.status}; save a finished take")
-    return _recipe_out(e.save_recipe(job, body.name))
-
-
-@app.delete("/api/recipes/{recipe_id}", status_code=204)
-def delete_recipe(recipe_id: str) -> None:
-    if not _engine().store.delete_recipe(recipe_id):
-        raise HTTPException(404, "recipe not found")
 
 
 class SelectionIn(BaseModel):
@@ -768,7 +831,7 @@ async def events() -> StreamingResponse:
             while True:
                 try:
                     kind, item = await asyncio.to_thread(q.get, True, 15)
-                    item = _seq_out(item, jobs=False) if kind == "sequence" else _job_out(item)
+                    item = _seq_out(item, jobs=False) if kind == "sequence" else _shot_out(item) if kind == "shot" else _job_out(item)
                     yield f"event: {kind}\ndata: {json.dumps(item)}\n\n"
                 except Exception:  # queue.Empty → keep-alive
                     yield ": ping\n\n"

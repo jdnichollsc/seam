@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -215,6 +216,66 @@ async def create_sequence(shots: list[str], segments: list[dict[str, Any]], stor
     return _seq_brief(await _req("POST", "/api/sequences", json=body))
 
 
+def _shot_brief(shot: dict[str, Any]) -> dict[str, Any]:
+    out = {k: shot.get(k) for k in ("id", "status", "error", "prompt", "aspect", "quality", "width", "height", "model", "seed")}
+    out["images"] = [{"name": i["name"], "url": f"{BASE}{i['url']}", "starred": i["starred"]} for i in shot["images"] if not i["deleted_at"]]
+    return out
+
+
+@server.tool()
+async def generate_shot(prompt: str, aspect: str = "16:9", quality: str = "standard", count: int = 1,
+                        seed: int | None = None, model: str = "shot") -> dict[str, Any]:
+    """Generate images for the user's Shots collection, on the backend Seam is set to, and wait for them.
+
+    prompt: framing, environment, light, lens, style. aspect: 16:9, 9:16, 1:1, 4:3, 3:4 or 21:9. quality: draft, standard
+    or high. count: 1-4. model: shot (Z-Image-Turbo, up to 4000 characters), shot_klein (FLUX.2 Klein 4B, 4000) or
+    shot_juggernaut (Juggernaut XL, 600). Show the user the images. use_shot turns one into a file for create_transition or create_sequence.
+    """
+    shot = await _req("POST", "/api/shots", json={"prompt": prompt, "aspect": aspect, "quality": quality, "count": count, "seed": seed, "model": model})
+    for _ in range(600):
+        if shot["status"] not in ("queued", "running"):
+            break
+        await asyncio.sleep(1)
+        shot = await _req("GET", f"/api/shots/{shot['id']}")
+    return _shot_brief(shot)
+
+
+@server.tool()
+async def list_shots(search: str = "", limit: int = 20) -> list[dict[str, Any]]:
+    """The user's collection, newest first: each generation's prompt, settings and images. Reuse a prompt by passing it to
+    generate_shot. search: words in the prompt."""
+    shots = (await _req("GET", f"/api/shots?limit={min(limit, 100)}"))["shots"]
+    return [_shot_brief(s) for s in shots if search.lower() in s["prompt"].lower()]
+
+
+@server.tool()
+async def use_shot(shot_id: str, image: str) -> dict[str, str]:
+    """Save one image of the collection to a local file, and return its path for create_transition or create_sequence."""
+    name = Path(image).name
+    shot = await _req("GET", f"/api/shots/{shot_id}")
+    if not any(i["name"] == name and not i["deleted_at"] for i in shot["images"]):
+        raise ValueError(f"no image {name} in shot {shot_id}")
+    folder = Path(tempfile.gettempdir()) / "seam-shots"
+    folder.mkdir(exist_ok=True)
+    async with httpx.AsyncClient(base_url=BASE, timeout=60) as c:
+        r = await c.get(f"/outputs/shots/{name}")
+    r.raise_for_status()
+    (folder / name).write_bytes(r.content)
+    return {"path": str(folder / name)}
+
+
+@server.tool()
+async def rough_cut(shots: list[str], segments: list[dict[str, Any]]) -> dict[str, Any]:
+    """The order and pacing of a sequence before spending any GPU time or credits: each shot held 1.5 s (a clip in full)
+    and a black card naming the transition that goes there. Nothing is rendered or queued. Same arguments as
+    create_sequence, of which only `preset` and `seconds` are read. Returns the video's URL."""
+    ups = await asyncio.gather(*[_upload(p, "mid") for p in shots])
+    body = {"shots": [{"clip": u["clip"], "first": u["first"], "last": u["last"]} if u.get("clip")
+                      else {"image": u["id"]} for u in ups], "segments": segments}
+    out = await _req("POST", "/api/rough-cut", json=body)
+    return {**out, "url": f"{BASE}{out['url']}"}
+
+
 async def _grow_body(shot: str, preset: str, seconds: int, seed: int | None, prompt_extra: str,
                      model: str | None = None) -> dict[str, Any]:
     u = await _upload(shot, "mid")
@@ -316,20 +377,6 @@ async def cancel_sequence(sequence_id: str) -> dict[str, Any]:
 async def star_take(job_id: str, starred: bool = True) -> dict[str, Any]:
     """Star a take the user liked, or unstar it. A starred take stays when its sequence goes to the trash."""
     return _brief(await _req("POST", f"/api/jobs/{job_id}/star", json={"starred": starred}))
-
-
-@server.tool()
-async def list_recipes() -> list[dict[str, Any]]:
-    """Saved settings to use again: pass preset, model, seconds and prompt_extra to create_transition or a segment.
-    A recipe with a `problem` can no longer render. `seed` only repeats a take on the same shots, so leave it out
-    on new ones."""
-    return await _req("GET", "/api/recipes")
-
-
-@server.tool()
-async def save_recipe(job_id: str, name: str) -> dict[str, Any]:
-    """Save a finished take's settings under a name, when the user asks to keep how it was made."""
-    return await _req("POST", "/api/recipes", json={"job_id": job_id, "name": name})
 
 
 def main() -> None:

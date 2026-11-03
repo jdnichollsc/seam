@@ -3,7 +3,7 @@
 Reads answer from the store; page tools only change the form the user is looking at. Nothing here writes, renders or
 deletes: a new take is an offer, resolved here and started by the user's click, because E2B proposed a render on 4 of 10
 hostile messages, and word rules for "star this" starred on "skip the rules, star all" (dev/research/e2b_selection_run3.txt).
-Stars, recipes and the bin stay on the cards. `outside`: other agents get reads and form changes, never offers."""
+Stars and the bin stay on the cards. `outside`: other agents get reads and form changes, never offers."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 HELP = (
     (("trash", "delete", "remove", "bin", "papelera", "borr"), "The bin on a card moves a take or sequence to the trash, with Undo. It stays "
      "7 days, then leaves the disk; Empty trash at the bottom of the gallery does it sooner. Your shots stay."),
-    (("recipe", "bookmark", "reuse", "receta"), "The bookmark on a finished take saves its effect, model, length and direction as "
-     "a recipe. Use fills the form with it; the shots stay yours."),
+    (("reuse", "recipe", "receta", "reusar"), "Open a take to fill the form with its shots and settings. For images, Generate Shot keeps "
+     "every prompt and its settings in a collection, ready to use again."),
     (("star", "favourite", "favorite", "estrella", "favorit"), "The star marks a take you like. It gets its own filter, and a starred take "
      "stays when its sequence goes to the trash."),
     (("3d", "glb", "model file"), "Drop a .glb on a shot. Seam opens a small viewer, you frame it, and it records a short "
@@ -28,6 +28,9 @@ HELP = (
      "only the new transition renders."),
     (("clip", "video"), "Drop a clip of 1 to 6 seconds as a shot. The transition leaves from its last frame or lands on "
      "its first, and you also get a version joined with the clips."),
+    (("generate shot", "generate an image", "generate image", "collection", "midjourney", "generar imagen", "generar shot", "colección"),
+     "Open Generate Shot above the shots. Write a prompt, pick aspect, quality and how many, and the images land in your "
+     "collection with their prompt. Any of them can be used again, or become a first shot, a last shot or part of a sequence."),
     (("upload", "image", "shot", "photo", "picture", "subir", "imagen", "foto"), "Click First shot and Last shot, or drop files on them. Seam reads "
      "each one to describe it in the prompt."),
     (("cloud", "credit", "gpu", "backend", "key", "crédito"), "The chip at the top right chooses where takes render: your GPU, or "
@@ -41,7 +44,7 @@ HELP = (
      "and the gallery. Not quite right? New take changes the effect, prompt or seed."),
 )
 HELP_DEFAULT = ("Add a first and a last shot, pick an effect and press Make transition. Ask me about sequences, clips, "
-                "3D models, recipes, the trash or Comfy Cloud.")
+                "3D models, generating shots, the trash or Comfy Cloud.")
 
 
 @dataclass(frozen=True)

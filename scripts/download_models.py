@@ -27,6 +27,11 @@ MODELS = {
         ("text_encoders", f"{HF}/Lightricks/LTX-2.5/resolve/main/text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors", 15372969374, True),
         ("text_encoders", f"{HF}/Comfy-Org/gemma-4/resolve/main/text_encoders/gemma4_e2b_it_int8_convrot.safetensors", 5199997904, False),
     ],
+    "shot": [  # Z-Image-Turbo — optional: the images of the Shots collection (license: Apache 2.0)
+        ("diffusion_models", f"{HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors", 12309866400, False),
+        ("text_encoders", f"{HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors", 8044982048, False),
+        ("vae", f"{HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors", 335304388, False),
+    ],
     "l23": [  # LTX-2.3 + transition LoRA — optional: only deferred/candidate presets (e.g. fire) use it
         ("checkpoints", f"{HF}/Lightricks/LTX-2.3-fp8/resolve/main/ltx-2.3-22b-distilled-fp8.safetensors", 29531884062, False),
         ("text_encoders", f"{HF}/Comfy-Org/ltx-2/resolve/main/split_files/text_encoders/gemma_3_12B_it_fp4_mixed.safetensors", 9447702218, False),

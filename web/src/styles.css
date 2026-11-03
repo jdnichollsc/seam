@@ -233,6 +233,25 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 /* Make */
 .make { display: grid; gap: 8px; padding: 12px 18px 16px 22px; border-top: 1px solid var(--line); }
 .btn-make { width: 100%; min-height: 56px; font-size: 22px; border-radius: var(--r-node); font-stretch: 68%; }
+.shot-form { display: grid; gap: 14px; padding: 0 12px 14px; }
+.shot-field { display: grid; gap: 6px; font-size: 13px; color: var(--dim); }
+.shot-field .seg { justify-self: start; }
+.shot-over { color: var(--danger, #ff6b6b); }
+.shot-field select, .shot-field input, .collection-tools input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--ink-raise); color: var(--text); font-size: 13.5px; }
+.shot-field select:focus, .shot-field input:focus, .collection-tools input:focus { outline: none; border-color: var(--yellow); }
+.collection-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 12px 14px; }
+.collection-tools input { flex: 1 1 200px; width: auto; min-width: 0; }
+.shot-empty { margin: 0; padding: 12px 12px 20px; color: var(--dim); text-align: center; }
+.shot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin: 0; padding: 0 12px 12px; list-style: none; }
+.shot-media { display: block; aspect-ratio: 16 / 9; background: #0e0a11; }
+.shot-media img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.shot-use { display: flex; align-items: center; gap: 6px; }
+.shot-use > span { color: var(--dim); font-size: 12.5px; white-space: nowrap; }
+.shot-use .btn { flex: 1; padding-inline: 6px; }
+.shot-pending { display: grid; align-content: center; gap: 8px; min-height: 180px; padding: 16px; text-align: center; }
+.rough { width: 100%; border-radius: var(--r-node); background: #000; }
+.apply-all { justify-self: start; padding: 0; border: 0; background: none; color: var(--dim); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
+.apply-all:hover { color: inherit; }
 .make-note { margin: 0; text-align: center; color: var(--dim); font-size: 13px; }
 .error { margin: 0; color: var(--danger); font-size: 14px; }
 
@@ -289,6 +308,7 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 /* Your transitions: takes as output nodes -------------------------------------------------- */
 .history { margin-top: 44px; }
 .history-head { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.history ol + .history-head { margin-top: 44px; }
 .history h2 { margin: 0; font-size: clamp(30px, 3vw, 44px); font-weight: 800; line-height: 1; font-stretch: 62%; }
 .total {
   display: inline-grid; place-items: center; min-width: 40px; height: 32px; padding: 0 10px; background: var(--yellow); color: var(--on-yellow);
@@ -333,26 +353,19 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .btn-icon.is-on { color: var(--yellow); }
 .btn-icon.is-on .icon path { fill: currentColor; }
 
-/* Recipes and the trash */
+/* The trash */
 .history-note { margin: 0 0 16px; color: var(--muted); font-size: 14px; }
 .history-note.is-error { color: var(--danger); }
 .link-btn { padding: 0; border: 0; background: none; color: var(--yellow); font: inherit; text-decoration: underline; cursor: pointer; }
 .link-btn.is-danger { color: var(--danger); }
-.recipe-name { display: flex; gap: 6px; margin-top: 8px; }
-.recipe-name input { flex: 1; min-width: 0; }
-.recipes { margin-bottom: 32px; }
-.recipe-list, .trash-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.recipe, .trash-list li { display: flex; align-items: center; gap: 12px; }
-.recipe img, .trash-list img, .recipe-blank { flex: none; width: 72px; height: 40px; border-radius: 4px; object-fit: cover; background: rgba(255, 255, 255, 0.06); }
-.recipe-body { display: flex; flex: 1; flex-direction: column; min-width: 0; color: var(--muted); font-size: 14px; }
-.recipe-body strong { color: var(--text); }
-.recipe-extra { overflow: hidden; color: var(--dim); text-overflow: ellipsis; white-space: nowrap; }
-.recipe-problem { color: var(--danger); }
+.trash-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.trash-list li { display: flex; align-items: center; gap: 12px; }
+.trash-list img, .thumb-blank { flex: none; width: 72px; height: 40px; border-radius: 4px; object-fit: cover; background: rgba(255, 255, 255, 0.06); }
 .trash { margin-top: 32px; color: var(--muted); }
 .trash summary { cursor: pointer; }
 .trash-note { margin: 12px 0; font-size: 14px; }
 .trash-list { margin-bottom: 12px; }
-.trash-list span:not(.recipe-blank) { flex: 1; min-width: 0; }
+.trash-list span:not(.thumb-blank) { flex: 1; min-width: 0; }
 
 /* Narrow screens: rail above canvas -------------------------------------------------------- */
 @media (max-width: 960px) {
@@ -463,6 +476,15 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
   border-radius: 10px; background: transparent; color: var(--muted); font-weight: 700;
 }
 .shot-add .icon { color: var(--sock-image); }
+.take-pick { display: grid; gap: 6px; }
+.take-pick-open { justify-self: center; padding: 4px 8px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
+.take-pick-open:hover { color: var(--text); }
+.take-pick-list { display: grid; gap: 4px; max-height: 260px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.take-pick-row { display: grid; grid-template-columns: 44px 44px 1fr; align-items: center; gap: 6px; width: 100%; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.take-pick-row:hover:not(:disabled) { border-color: var(--sock-image); }
+.take-pick-row:disabled { opacity: 0.45; cursor: default; }
+.take-pick-row img { width: 44px; height: 30px; border-radius: 4px; object-fit: cover; }
+.take-pick-row small { display: block; color: var(--dim); font-size: 12px; }
 .shot-add button:hover, .shot-add.is-over button { border-color: var(--sock-image); color: var(--text); }
 .seq-stage { position: absolute; inset: 0; display: flex; gap: 2px; transition: filter 0.4s; }
 .seq-stage.is-dim { filter: brightness(0.55) saturate(0.8); }

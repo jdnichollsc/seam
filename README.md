@@ -37,7 +37,9 @@ model runs on your machine and every take can be reopened, inspected and re-run 
   shot, then keep adding; only the new transition renders, and every transition starts from your own shot, so the
   story stays as consistent as the shots you bring.
 - **Ask the helper**: a chat on the local Gemma-4 E2B explains the app, knows what you have open, and prepares a new take you start with a click. It never renders or deletes by itself. It reads concrete requests best, like *transition 2 to Smoke at 10 seconds*; free phrasing often gets a question or a description instead. It runs on your GPU only.
-- **Keep what works**: star a take, save its settings as a recipe to use on other shots, and move what missed to a trash that keeps it for 7 days.
+- **Generate shots**: a prompt, an aspect, a quality, a model, up to 4 images, on your GPU or Comfy Cloud. They stay in a collection like Midjourney's: every image shows its prompt and settings, and any of them can be reused, varied, or dropped into a transition or a sequence.
+- **Rough cut**: see a sequence's order and pacing in seconds, before spending any GPU time or credits. Shots, clips and a card naming each transition; nothing renders.
+- **Keep what works**: star a take, open it to use its settings again, and move what missed to a trash that keeps it for 7 days.
 - **CLI**: `seam make first.png last.png --preset smoke`, `seam sequence make 1.png 2.png 3.png --preset smoke,whip_pan`, then `seam sequence extend <id> 4.png --preset ink`, and `seam sequence edit <id> --order 1,3,2,4 --transition 1=ink --transition 2=melt --transition 3=smoke` to reorder (only the new hand-offs render).
 - **Agent plugin**: a skill + MCP server so Claude Code (or any MCP agent) can plan, render, review and refine
   transitions for you. Packaged as a Claude Code plugin and as an [Agent Plugins](https://agent-plugins.org/) 1.0 plugin.
@@ -218,7 +220,9 @@ browser / CLI / agent (MCP)
 | Gemma-4 12B (LTX-2.5 text encoder) · Gemma-4 E2B (prompt enhancer) | text encoding / prompt enhancement | Gemma terms |
 | [LTX-2.3](https://huggingface.co/Lightricks/LTX-2.3-fp8) 22B distilled fp8 + Gemma-3 12B | optional video model | LTX-2 Community License |
 | [LTX-2.3 Transition LoRA](https://huggingface.co/valiantcat/LTX-2.3-Transition-LORA) | optional transition style | see model card |
-| Z-Image-Turbo | only used to generate the fictional test images in `dev/` | see model card |
+| [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) + Qwen 3 4B | optional: the images of Generate shots, and the fictional test images in `dev/` | Apache 2.0 |
+| [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B) | optional: a model of Generate shots, when your ComfyUI or Comfy Cloud has it; Seam does not download it | Apache 2.0 |
+| [Juggernaut XL v9](https://huggingface.co/RunDiffusion/Juggernaut-XL-v9) | optional: a model of Generate shots, when your ComfyUI or Comfy Cloud has it; Seam does not download it | CreativeML OpenRAIL-M (use restrictions apply) |
 
 Seam's code is MIT ([LICENSE](LICENSE)). The models keep their own licenses; read them before commercial use.
 The effect presets are our own text, inspired by common transition concepts — no third-party prompts or media.

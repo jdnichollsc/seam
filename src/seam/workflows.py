@@ -23,11 +23,13 @@ class WorkflowSpec:
     fps: int
     slots: dict[str, tuple[str, str]]
     label: str = ""
-    kind: str = "open"                       # open | partner (a paid API node, picked only on request)
+    kind: str = "open"                       # open | partner (a paid API node, picked only on request) | image (Generate shots)
     seconds: tuple[int, ...] = (5,)          # lengths it renders when it is not an effect's qualified model
     prompt: str = "plain"                    # which prompt renderer (presets.render_prompt)
     backends: tuple[str, ...] = ("local", "cloud")
     seconds_as_frames: bool = False          # its length input counts frames: seconds * fps + 1
+    max_prompt: int = 0                      # image: the longest prompt its form takes
+    quality: tuple[tuple[str, float, int], ...] = ()  # image: (name, megapixels, steps)
 
     def graph(self) -> dict[str, Any]:
         return json.loads(self.workflow_file.read_text(encoding="utf-8"))
@@ -40,13 +42,20 @@ def load_spec(workflows_dir: Path, model: str) -> WorkflowSpec:
                         label=data.get("label", ""), kind=data.get("kind", "open"),
                         seconds=tuple(data.get("seconds", (5,))), prompt=data.get("prompt", "plain"),
                         backends=tuple(data.get("backends", ("local", "cloud"))),
-                        seconds_as_frames=data.get("seconds_as_frames", False))
+                        seconds_as_frames=data.get("seconds_as_frames", False), max_prompt=data.get("max_prompt", 0),
+                        quality=tuple((k, *v) for k, v in data.get("quality", {}).items()))
 
 
 def load_catalog(workflows_dir: Path) -> dict[str, WorkflowSpec]:
     """The models a transition can pick: every entry with a label (the shot reader has none)."""
     data = json.loads((workflows_dir / "slots.json").read_text(encoding="utf-8"))
-    return {k: load_spec(workflows_dir, k) for k, v in data.items() if isinstance(v, dict) and v.get("label")}
+    return {k: load_spec(workflows_dir, k) for k, v in data.items() if isinstance(v, dict) and v.get("label") and v.get("kind") != "image"}
+
+
+def load_image_models(workflows_dir: Path) -> dict[str, WorkflowSpec]:
+    """The models Generate shots can pick."""
+    data = json.loads((workflows_dir / "slots.json").read_text(encoding="utf-8"))
+    return {k: load_spec(workflows_dir, k) for k, v in data.items() if isinstance(v, dict) and v.get("kind") == "image"}
 
 
 def missing_slots(spec: WorkflowSpec) -> list[str]:

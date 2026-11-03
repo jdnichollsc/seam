@@ -12,6 +12,29 @@ export type Preset = {
 
 /** An image, or a clip: then `id` is the frame the transition uses and `clip` the video around it.
  *  Uploaded for a sequence (role mid), a clip also carries both ends: `first` (landed on) and `last` (left from). */
+/** One image of a generation in the Shots collection; star and trash are per image. */
+export type ShotImage = { name: string; url: string; starred: boolean; deleted_at: number | null }
+/** One generation: a prompt and settings, and the images it made. */
+export type ImageModel = { id: string; label: string; available: boolean | null; reason: string; max_prompt: number }
+
+export type GeneratedShot = {
+  id: string
+  status: string
+  prompt: string
+  aspect: string
+  quality: string
+  width: number
+  height: number
+  steps: number
+  model: string
+  seed: number
+  count: number
+  images: ShotImage[]
+  error: string | null
+  parent_id: string | null
+  created_at: number
+}
+
 export type Upload = {
   id: string
   url: string
@@ -57,28 +80,12 @@ export type EditIn = { order: number[]; transitions?: Record<string, SegmentIn>;
 
 export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
-/** Saved settings of a take, to use on other shots. `problem`: why they can no longer render. */
-export type Recipe = {
-  id: string
-  name: string
-  preset: string
-  model: string
-  seconds: number
-  prompt_extra: string
-  seed: number | null
-  source_job: string
-  created_at: number
-  poster_url?: string
-  problem: string | null
-}
-
 /** What the helper did: `action` is applied to the form at once, `offer` waits for the user's click. */
 export type HelperAction =
   | { name: 'pick_effect'; effect: string; label?: string }
   | { name: 'set_length'; seconds: number }
   | { name: 'set_direction'; text: string }
   | { name: 'open_take'; job_id: string }
-  | { name: 'refresh' }
 export type RefineBody = {
   preset?: string
   model?: string
@@ -227,17 +234,25 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, selection }),
     }),
-  recipes: () => call<Recipe[]>('/api/recipes'),
-  saveRecipe: (job_id: string, name: string) =>
-    call<Recipe>('/api/recipes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id, name }),
-    }),
-  deleteRecipe: (id: string) => call<void>(`/api/recipes/${id}`, { method: 'DELETE' }),
   sequences: () => call<Sequence[]>('/api/sequences?limit=30'),
   createSequence: (body: { shots: ShotIn[]; segments: SegmentIn[]; story?: string }) =>
     call<Sequence>('/api/sequences', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  shots: () => call<{ shots: GeneratedShot[]; unavailable: string | null; models: ImageModel[] }>('/api/shots'),
+  createShot: (body: { prompt: string; aspect: string; quality: string; count: number; seed?: number; model: string }) =>
+    call<GeneratedShot>('/api/shots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  shotVariation: (id: string) => call<GeneratedShot>(`/api/shots/${id}/variations`, { method: 'POST' }),
+  cancelShot: (id: string) => call<GeneratedShot>(`/api/shots/${id}/cancel`, { method: 'POST' }),
+  dismissShot: (id: string) => call<void>(`/api/shots/${id}`, { method: 'DELETE' }),
+  editShotImage: (id: string, name: string, body: { starred?: boolean; trashed?: boolean }) =>
+    call<GeneratedShot>(`/api/shots/${id}/images/${name}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  useShotImage: (id: string, name: string) => call<Upload>(`/api/shots/${id}/images/${name}/use`, { method: 'POST' }),
+  purgeShots: () => call<{ removed: number }>('/api/shots/purge', { method: 'POST' }),
+  roughCut: (body: { shots: ShotIn[]; segments: SegmentIn[] }) =>
+    call<{ url: string; seconds: number }>('/api/rough-cut', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -282,7 +297,7 @@ export const receiptUrl = (id: string) => `/api/jobs/${id}/receipt`
 export const comfyBundleUrl = (id: string) => `/api/jobs/${id}/comfyui.zip`
 export const sequenceReceiptUrl = (id: string) => `/api/sequences/${id}/receipt`
 
-type Listeners = { job?: (job: Job) => void; sequence?: (seq: Sequence) => void; open?: () => void }
+type Listeners = { job?: (job: Job) => void; sequence?: (seq: Sequence) => void; shot?: (shot: GeneratedShot) => void; open?: () => void }
 
 /** Live job and sequence updates over server-sent events; `open` fires on connect and on every reconnect (updates
  *  sent while disconnected are lost, so fetch the current state then). Returns an unsubscribe function. */
@@ -290,6 +305,7 @@ export function subscribe(on: Listeners): () => void {
   const es = new EventSource('/api/events')
   es.addEventListener('open', () => on.open?.())
   if (on.job) es.addEventListener('job', (e) => on.job!(JSON.parse((e as MessageEvent).data) as Job))
+  if (on.shot) es.addEventListener('shot', (e) => on.shot!(JSON.parse((e as MessageEvent).data) as GeneratedShot))
   if (on.sequence) es.addEventListener('sequence', (e) => on.sequence!(JSON.parse((e as MessageEvent).data) as Sequence))
   return () => es.close()
 }

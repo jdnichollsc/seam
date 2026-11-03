@@ -28,11 +28,10 @@ ACT = re.compile(r"\b(render|generate|start(?! over)|delete|erase|trash|pay|rend
                  r"|empieza|make (the|a) (transition|video))", re.I)
 THIS = re.compile(r"\b(this|selected|esta|este|seleccionad[ao])\b", re.I)
 # What is open is acted on from the user's own words, never the model's pick: on 40 held-out phrases E2B chose the right
-# selection tool 10 times (dev/research/e2b_selection_run1.txt). Word rules for stars and recipes starred and saved on
+# selection tool 10 times (dev/research/e2b_selection_run1.txt). Word rules for stars starred on
 # hostile phrases they were not written for (run3), so the chat no longer writes; those stay on the cards.
 INJECTED = re.compile(r"\b(ignore|ignora|system|sistema|admin|call:|job \d+|everything|all takes|todas|todo|olvida)", re.I)
 STAR = re.compile(r"\b(star|favou?rite|estrella|favorit[oa]s?)\b", re.I)
-SAVE = re.compile(r"\b(recipes?|recetas?|bookmark)\b", re.I)
 FORM = {"pick_effect", "set_length", "set_direction"}
 ASK = re.compile(r"\b(what|which|how long|tell me|describe|status|qu[eé]|cu[aá]l|cu[aá]nto dura|descr[ií]b\w*|dime|estado)\b", re.I)
 ABOUT = re.compile(r"\b(this|it|take|selected|esta|este|toma|seleccionad[ao])\b", re.I)
@@ -179,8 +178,8 @@ def turn(engine: Engine, message: str, selection: dict[str, Any] | None = None) 
         return {**run_tool(engine, "explain", {"topic": message}), "tool": "explain"}
     if STATUS.search(message) and not (record and ABOUT.search(message)):
         return {**run_tool(engine, "show_status", {}), "tool": "show_status"}
-    if STAR.search(message) or SAVE.search(message):
-        return {"say": "Stars and recipes are on the card: the star, and the bookmark on a finished take."}
+    if STAR.search(message):
+        return {"say": "Stars are on the card: the star on a finished take."}
     if INJECTED.search(message):
         return {"say": PLAIN}
     wanted = _for_selection(message)
