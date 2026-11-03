@@ -72,6 +72,30 @@ export type Recipe = {
   problem: string | null
 }
 
+/** What the helper did: `action` is applied to the form at once, `offer` waits for the user's click. */
+export type HelperAction =
+  | { name: 'pick_effect'; effect: string; label?: string }
+  | { name: 'set_length'; seconds: number }
+  | { name: 'set_direction'; text: string }
+  | { name: 'open_take'; job_id: string }
+  | { name: 'refresh' }
+export type RefineBody = {
+  preset?: string
+  model?: string
+  seconds?: number
+  seed?: number
+  prompt_extra?: string
+  prompt_override?: string
+  expected_backend?: string
+  expected_updated_at?: number
+}
+/** A new take resolved on the server: the label says what `body` renders, and only a click sends it. */
+export type NewTakeOffer = { name: 'new_take'; label: string; job_id?: string; sequence_id?: string; part?: number; body: RefineBody }
+export type HelperOffer = (Extract<HelperAction, { name: 'pick_effect' }> & { label: string }) | NewTakeOffer
+export type Selection = { job_id?: string; sequence_id?: string }
+export type ChatReply = { say: string; action?: HelperAction; offer?: HelperOffer }
+export type HelperTool = { name: string; description: string; args: Record<string, string>; kind: string }
+
 export type Trash = { days: number; jobs: Job[]; sequences: Sequence[] }
 
 export type Job = {
@@ -171,7 +195,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  refine: (id: string, body: { preset?: string; model?: string; seconds?: number; seed?: number; prompt_extra?: string }) =>
+  refine: (id: string, body: RefineBody) =>
     call<Job>(`/api/jobs/${id}/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,6 +214,19 @@ export const api = {
   restoreSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/restore`, { method: 'POST' }),
   trash: () => call<Trash>('/api/trash'),
   emptyTrash: () => call<{ removed: number; kept: number }>('/api/trash', { method: 'DELETE' }),
+  tools: () => call<{ tools: HelperTool[]; chat_unavailable: string | null }>('/api/tools'),
+  callTool: (name: string, args: Record<string, unknown>) =>
+    call<ChatReply>(`/api/tools/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(args),
+    }),
+  chat: (message: string, selection?: Selection) =>
+    call<ChatReply>('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, selection }),
+    }),
   recipes: () => call<Recipe[]>('/api/recipes'),
   saveRecipe: (job_id: string, name: string) =>
     call<Recipe>('/api/recipes', {
@@ -206,7 +243,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   /** `segment` is 1-based, as the server and the agent tools count. */
-  refineSegment: (id: string, segment: number, body: { preset?: string; model?: string; seconds?: number; prompt_extra?: string; seed?: number } = {}) =>
+  refineSegment: (id: string, segment: number, body: RefineBody = {}) =>
     call<Sequence>(`/api/sequences/${id}/segments/${segment}/refine`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -9,6 +9,10 @@ import {
   subscribe,
   uploadUrl,
   type BackendName,
+  type ChatReply,
+  type HelperAction,
+  type HelperOffer,
+  type Selection,
   type BackendState,
   type Health,
   type ModelRow,
@@ -22,6 +26,8 @@ import {
   type Example,
   type Upload,
 } from './api'
+
+import { registerWebMcp } from './webmcp'
 
 gsap.registerPlugin(useGSAP)
 
@@ -1130,6 +1136,74 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry, onS
   )
 }
 
+const CHAT_STARTERS = ['How do I add a shot to a sequence?', 'Which effect fits a dreamy wedding?', 'What is rendering now?']
+
+/** The helper, on the local Gemma-4 E2B. It can answer and change the form; rendering and deleting stay on their buttons. */
+function ChatPanel({ unavailable, onAction, onOffer, selection, backend }: { unavailable: string | null; onAction: (a: HelperAction) => void; onOffer: (o: HelperOffer) => void; selection?: Selection; backend?: string }) {
+  type Line = { role: 'user' | 'model'; text: string; offer?: ChatReply['offer'] }
+  const [open, setOpen] = useState(false)
+  const [lines, setLines] = useState<Line[]>([])
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const end = useRef<HTMLDivElement>(null)
+  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }) }, [lines, busy])
+  const send = async (message: string) => {
+    const said = message.trim()
+    if (!said || busy) return
+    setText('')
+    setLines((prev) => [...prev, { role: 'user', text: said }])
+    setBusy(true)
+    try {
+      const reply = await api.chat(said, selection)
+      if (reply.action) onAction(reply.action)
+      setLines((prev) => [...prev, { role: 'model', text: reply.say, offer: reply.offer }])
+    } catch (e) {
+      setLines((prev) => [...prev, { role: 'model', text: (e as Error).message }])
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (!open) return <button className="chat-open btn" onClick={() => setOpen(true)}>Ask Seam</button>
+  return (
+    <aside className="chat" aria-label="Ask Seam">
+      <header className="chat-head">
+        <strong>Ask Seam</strong>
+        <span className="chat-head-actions">
+          {lines.length > 0 && <button className="btn btn-quiet chat-new" onClick={() => setLines([])}>New chat</button>}
+          <button className="btn-icon" aria-label="Close the chat" onClick={() => setOpen(false)}><Icon name="close" /></button>
+        </span>
+      </header>
+      <div className="chat-log" role="log" aria-live="polite">
+        {unavailable ? <p className="chat-note">{unavailable}</p> : lines.length === 0 && (
+          <>
+            <p className="chat-note">I can explain Seam, set up the form and prepare changes to what is open. Nothing renders until you press its button.</p>
+            {CHAT_STARTERS.map((s) => <button key={s} className="chat-starter" onClick={() => void send(s)}>{s}</button>)}
+          </>
+        )}
+        {lines.map((l, i) => (
+          <div key={i} className={`chat-line is-${l.role}`}>
+            {l.text}
+            {l.offer && (
+              <button className="btn btn-quiet chat-offer" onClick={() => {
+                const offer = l.offer!
+                setLines((prev) => prev.map((x, n) => (n === i ? { ...x, offer: undefined } : x)))  // an offer is used once
+                onOffer(offer)
+              }}>{l.offer.label}</button>
+            )}
+          </div>
+        ))}
+        {busy && <p className="chat-note">Thinking. If a take is rendering, I answer when it finishes.</p>}
+        <div ref={end} />
+      </div>
+      <form className="chat-form" onSubmit={(e) => { e.preventDefault(); void send(text) }}>
+        <input aria-label={`Message to Seam on ${backend ?? 'this backend'}`} placeholder="Ask about Seam" maxLength={500} disabled={!!unavailable}
+          value={text} onChange={(e) => setText(e.target.value)} />
+        <button className="btn btn-quiet" disabled={!!unavailable || busy || !text.trim()}>Send</button>
+      </form>
+    </aside>
+  )
+}
+
 /** Saved settings of takes that came out well: the form takes them, the shots stay the user's. */
 function RecipeShelf({ recipes, presets, onUse, onRemove }: {
   recipes: Recipe[]
@@ -1761,6 +1835,51 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const selection: Selection | undefined = focusSeqId ? { sequence_id: focusSeqId } : focusId ? { job_id: focusId } : undefined
+  const selectionNow = useRef(selection)
+  selectionNow.current = selection
+  const applyOffer = (o: HelperOffer) => {
+    if (o.name === 'pick_effect') { setPreset(o.effect); return }
+    setError(null)
+    if (o.sequence_id) {
+      api.refineSegment(o.sequence_id, o.part ?? 1, o.body).then(hydrate).catch((e) => setError(`Could not start that take: ${(e as Error).message}`))
+    } else if (o.job_id) {
+      api.refine(o.job_id, o.body).then((next) => { setFocusSeqId(null); setFocusId(next.id) })
+        .catch((e) => setError(`Could not start that take: ${(e as Error).message}`))
+    }
+  }
+  const applyHelper = (a: HelperAction) => {
+    if (a.name === 'refresh') loadRecipes()
+    if (a.name === 'pick_effect') setPreset(a.effect)
+    if (a.name === 'set_direction') setExtra(a.text)
+    if (a.name === 'set_length') {
+      const allowed = allowedLengths(presets.find((p) => p.id === preset), modelPick, models)
+      if (allowed.includes(a.seconds)) setSeconds(a.seconds)
+      else setError(`This effect takes ${allowed.join(' or ')} seconds.`)
+    }
+    if (a.name === 'open_take') {
+      const job = jobs.find((j) => j.id === a.job_id)
+      if (job) reuse(job)
+    }
+  }
+  const helper = useRef(applyHelper)
+  helper.current = applyHelper
+  const [chatUnavailable, setChatUnavailable] = useState<string | null>(null)
+  useEffect(() => {
+    let undo = () => {}
+    let gone = false
+    api.tools().then(({ tools, chat_unavailable }) => {
+      setChatUnavailable(chat_unavailable)
+      if (gone) return
+      undo = registerWebMcp(tools, async (name, args) => {
+        const reply = await api.callTool(name, { ...args, selection: selectionNow.current })
+        if (reply.action) helper.current(reply.action)
+        return reply
+      })
+    }).catch(() => {})
+    return () => { gone = true; undo() }
+  }, [health?.backend])
+
   const videoUrl = focus && (showFull && focus.merged_url ? focus.merged_url : focus.output_url)
 
   return (
@@ -2193,6 +2312,7 @@ export default function App() {
         </main>
       </div>
       <Wires root={root} running={running} />
+      <ChatPanel unavailable={chatUnavailable} onAction={applyHelper} onOffer={applyOffer} selection={selection} backend={health?.backend} />
       {model && (
         <Suspense fallback={null}>
           <GlbStudio

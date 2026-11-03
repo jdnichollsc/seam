@@ -25,7 +25,8 @@ from . import media, receipt
 from . import backend as backends
 from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
-from .engine import TRASH_DAYS, Engine, SequenceBusy, TakeInUse, TransitionRequest, store_clip, store_upload
+from . import agent, catalog
+from .engine import TRASH_DAYS, BackendChanged, Engine, SequenceBusy, TakeInUse, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
 
 settings = get_settings()
@@ -132,6 +133,11 @@ class RefineIn(BaseModel):
     b_desc: str | None = Field(default=None, max_length=400)
     a_ref: str | None = Field(default=None, max_length=120)
     b_ref: str | None = Field(default=None, max_length=120)
+    expected_backend: str | None = Field(default=None, description="refuse if takes no longer render here")
+    expected_updated_at: float | None = Field(default=None, description="refuse if the sequence changed since then")
+
+    def changes(self) -> dict[str, Any]:
+        return self.model_dump(exclude={"expected_backend", "expected_updated_at"})
 
 
 class ShotIn(BaseModel):
@@ -504,9 +510,11 @@ def cancel_job(job_id: str) -> dict[str, Any]:
 @app.post("/api/jobs/{job_id}/refine", status_code=201)
 def refine_job(job_id: str, body: RefineIn) -> dict[str, Any]:
     try:
-        return _job_out(_engine().refine(job_id, body.model_dump()))
+        return _job_out(_engine().refine(job_id, body.changes(), expected_backend=body.expected_backend))
     except KeyError as e:
         raise HTTPException(404, "job not found") from e
+    except BackendChanged as e:
+        raise HTTPException(409, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
 
@@ -545,8 +553,8 @@ def refine_segment(seq_id: str, index: int, body: RefineIn) -> dict[str, Any]:
     """A new take of segment `index` (1-based); the other takes are reused and the sequence joins again."""
     _sequence(seq_id)
     try:
-        return _seq_out(_engine().refine_segment(seq_id, index - 1, body.model_dump()))
-    except SequenceBusy as e:
+        return _seq_out(_engine().refine_segment(seq_id, index - 1, body.changes(), body.expected_updated_at, body.expected_backend))
+    except (SequenceBusy, BackendChanged) as e:
         raise HTTPException(409, str(e)) from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
@@ -699,16 +707,54 @@ def create_recipe(body: RecipeIn) -> dict[str, Any]:
         raise HTTPException(404, "job not found")
     if job.status != "succeeded":
         raise HTTPException(409, f"take {job.id} is {job.status}; save a finished take")
-    p = job.params
-    return _recipe_out(e.store.create_recipe(
-        name=body.name.strip(), preset=p["preset"], model=p.get("model") or e.settings.model,
-        seconds=p.get("seconds", 5), prompt_extra=p.get("prompt_extra", ""), seed=p.get("seed"), source_job=job.id))
+    return _recipe_out(e.save_recipe(job, body.name))
 
 
 @app.delete("/api/recipes/{recipe_id}", status_code=204)
 def delete_recipe(recipe_id: str) -> None:
     if not _engine().store.delete_recipe(recipe_id):
         raise HTTPException(404, "recipe not found")
+
+
+class SelectionIn(BaseModel):
+    job_id: str | None = Field(default=None, max_length=64)
+    sequence_id: str | None = Field(default=None, max_length=64)
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=agent.MAX_MESSAGE)
+    selection: SelectionIn | None = None
+
+
+@app.get("/api/tools")
+def list_tools() -> dict[str, Any]:
+    return {"tools": [t.public() for t in catalog.TOOLS if t.outside], "chat_unavailable": agent.available(_engine())}
+
+
+def _model_call(action: Any) -> dict[str, Any]:
+    try:
+        return action()
+    except Exception as e:  # noqa: BLE001 — the chat is optional: say what is missing, never break the page
+        print(f"seam: chat turn failed: {type(e).__name__}: {e}"[:600], flush=True)
+        raise HTTPException(503, "The chat could not reach its model. Check that ComfyUI is running and Gemma-4 E2B "
+                                 "is installed (seam doctor).") from e
+
+
+@app.post("/api/tools/{name}")
+def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name not in catalog.BY_NAME or not catalog.BY_NAME[name].outside:  # writes need a person typing in the chat
+        raise HTTPException(404, f"no tool {name}")
+    if catalog.BY_NAME[name].uses_model and (why := agent.available(_engine())):
+        raise HTTPException(409, why)
+    return _model_call(lambda: agent.run_tool(_engine(), name, args))
+
+
+@app.post("/api/chat")
+def chat(body: ChatIn) -> dict[str, Any]:
+    e = _engine()
+    if why := agent.available(e):
+        raise HTTPException(409, why)
+    return _model_call(lambda: agent.turn(e, body.message, body.selection.model_dump() if body.selection else None))
 
 
 @app.get("/api/events")

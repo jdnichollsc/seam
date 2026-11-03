@@ -553,3 +553,24 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .model-pick select { width: 100%; }
 .length + .model-pick { margin-inline: 10px; }
 .board-link.is-new select + select { margin-top: 4px; }
+
+/* The helper ------------------------------------------------------------------------------- */
+.chat-open { position: fixed; right: 20px; bottom: 20px; z-index: 40; }
+.chat {
+  position: fixed; right: 20px; bottom: 20px; z-index: 40; display: flex; flex-direction: column;
+  width: min(380px, calc(100vw - 40px)); height: min(520px, calc(100vh - 40px));
+  border: 1px solid var(--line-strong); border-radius: 12px; background: var(--ink-raise);
+}
+.chat-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.chat-log { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; padding: 14px; overflow-y: auto; font-size: 14px; }
+.chat-note { margin: 0; color: var(--dim); }
+.chat-starter { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--muted); font: inherit; text-align: left; cursor: pointer; }
+.chat-starter:hover { border-color: var(--line-strong); color: var(--text); }
+.chat-line { max-width: 90%; padding: 8px 10px; border-radius: 8px; line-height: 1.45; overflow-wrap: anywhere; }
+.chat-line.is-user { align-self: flex-end; background: var(--ink-hover); }
+.chat-line.is-model { color: var(--muted); }
+.chat-offer { display: block; margin-top: 8px; }
+.chat-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid var(--line); }
+.chat-form input { flex: 1; min-width: 0; }
+.chat-head-actions { display: flex; align-items: center; gap: 6px; }
+.chat-new { padding: 4px 10px; font-size: 12px; }
