@@ -8,6 +8,7 @@ import os
 import queue
 import random
 import shutil
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -19,12 +20,12 @@ from comfy_sdk import Comfy, Progress, StatusChange
 from . import backend as backends
 from . import models as model_status
 from . import describe as shots
-from . import media, receipt
+from . import media, receipt, shotgen
 from .config import Settings
 from .describe import ShotText
-from .jobs import JobRecord, JobStore, SequenceRecord
+from .jobs import JobRecord, JobStore, SequenceRecord, ShotRecord
 from .presets import Preset, load_presets, render_prompt
-from .workflows import WorkflowSpec, build, load_catalog, load_spec
+from .workflows import WorkflowSpec, build, load_catalog, load_image_models, load_spec
 
 SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may still have rendered there "
                   "(check ComfyUI's queue/output). Use New take to render it again.")
@@ -32,6 +33,7 @@ SECONDS_CHOICES = (5, 8, 10)  # what the graphs render; each launch effect lists
 SEQUENCE_SHOTS = (2, 8)
 CLOUD_GRACE_S = 30.0
 SEQ = "seq:"  # worker queue items for sequences (reconcile/join), next to plain job ids
+SHOT = "shot:"  # and for shot generations: one queue, so the GPU is never shared
 
 
 TRASH_DAYS = 7  # how long the trash keeps a take or a sequence before its files go
@@ -39,6 +41,10 @@ TRASH_DAYS = 7  # how long the trash keeps a take or a sequence before its files
 
 class TakeInUse(ValueError):
     """A sequence still joins this take: it leaves through the sequence's storyboard."""
+
+
+class ShotsUnavailable(ValueError):
+    """Shots can't generate on this backend or install; the message says why."""
 
 
 class BackendChanged(ValueError):
@@ -85,6 +91,7 @@ class Engine:
         self.presets: dict[str, Preset] = load_presets(settings.presets_file)
         self._queue: queue.Queue[str] = queue.Queue()
         self._handles: dict[str, Any] = {}
+        self._rough_lock = threading.Lock()
         self._seq_lock = threading.Lock()  # sequence pointer swaps vs the worker's reconcile
         self._writing: set[str] = set()  # worker: the take or join whose files are being written, even if cancelled
         self._submit_lock = threading.Lock()  # cancel vs submit: a cancelled take never reaches the GPU
@@ -94,6 +101,7 @@ class Engine:
     def start(self) -> None:
         self.settings.ensure_dirs()
         self.purge_trash()
+        self.purge_shots()
         for job in self.store.list(limit=10_000):
             if job.status in ("queued", "running"):
                 if job.comfy_job_id:  # re-attach instead of resubmitting
@@ -107,6 +115,13 @@ class Engine:
         for seq in self.store.list_sequences(limit=10_000):  # e.g. died after the last segment, before the join
             if seq.status in ("running", "assembling"):
                 self._queue.put(SEQ + seq.id)
+        for shot in self.store.list_shots(limit=10_000):
+            if shot.status in ("queued", "running"):
+                if shot.comfy_job_id:
+                    self._queue.put(SHOT + shot.id)
+                else:
+                    error = SUBMIT_UNKNOWN if shot.submitting_at else "server restarted before submission"
+                    self.store.update_shot(shot.id, status="interrupted", error=error)
         self._worker.start()
 
     # -- backends -------------------------------------------------------------------------------
@@ -258,6 +273,32 @@ class Engine:
             return self.store.update(job_id, status="cancelled", **({"error": error} if error else {}))
 
     # -- sequences ------------------------------------------------------------------------------
+    def rough_cut(self, shots: list[dict[str, Any]], segments: list[dict[str, Any]]) -> Path:
+        """A sequence's order and pacing from ffmpeg alone, before any GPU time: not a take, no job row, not in the gallery.
+        Same request, same file. Older files leave after a day."""
+        lo, hi = SEQUENCE_SHOTS
+        if not lo <= len(shots) <= hi or len(segments) != len(shots) - 1:
+            raise ValueError(f"a sequence has {lo}-{hi} shots and one transition per hand-off")
+        labels = []
+        for i, seg in enumerate(segments):
+            preset = self.presets.get(seg.get("preset") or "")
+            if seg.get("preset") and preset is None:
+                raise ValueError(f"transition {i + 1}: unknown effect {seg['preset']!r}")
+            labels.append(f"{preset.name if preset else 'Surprise me'} · {seg.get('seconds', 5)} s")
+        folder = self.settings.outputs_dir / "rough"
+        folder.mkdir(parents=True, exist_ok=True)
+        key = json.dumps([shots, labels], sort_keys=True)
+        dst = folder / f"{hashlib.sha256(key.encode()).hexdigest()[:16]}.mp4"
+        with self._rough_lock:  # the same request twice would write one temp file
+            if dst.is_file():
+                return dst
+            for old in folder.glob("*.mp4"):
+                if time.time() - old.stat().st_mtime > 86400:
+                    old.unlink(missing_ok=True)
+            width, height = media.output_size(*media.image_size(Path(shots[0]["last"])))
+            with tempfile.TemporaryDirectory(dir=folder) as work:
+                return media.rough_cut(shots, labels, dst, Path(work), width, height)
+
     def create_sequence(self, shots: list[dict[str, Any]], segments: list[dict[str, Any]],
                         story: str = "") -> SequenceRecord:
         """shots: [{first, last, clip?}] (paths; an image has first == last), segments: TransitionRequest fields
@@ -589,7 +630,7 @@ class Engine:
                 self.store.update_sequence(seq_id, status="succeeded", output=name, poster=f"{dst.stem}.jpg",
                                            sheet=f"{dst.stem}_sheet.png", error=None)
 
-    # -- trash, stars, recipes -------------------------------------------------------------------
+    # -- trash, stars ---------------------------------------------------------------------------
     def trash_job(self, job_id: str) -> JobRecord:
         """Into the trash, nothing leaves the disk yet. A take a sequence joins is removed through that sequence."""
         with self._seq_lock:
@@ -690,21 +731,195 @@ class Engine:
                                                      if k not in ("sequence_id", "segment")})
         return {"removed": removed, "kept": kept}
 
-    def save_recipe(self, job: JobRecord, name: str) -> RecipeRecord:
-        p = job.params
-        return self.store.create_recipe(
-            name=name.strip(), preset=p["preset"], model=p.get("model") or self.settings.model,
-            seconds=p.get("seconds", 5), prompt_extra=p.get("prompt_extra", ""), seed=p.get("seed"), source_job=job.id)
+    # -- shots ----------------------------------------------------------------------------------
+    def _shot_spec(self, model: str = "shot") -> WorkflowSpec:
+        """By id, or by the label a generation keeps."""
+        for spec in load_image_models(self.settings.workflows_dir).values():
+            if model in (spec.model, spec.label):
+                return spec
+        raise ValueError(f"unknown image model {model!r}")
 
-    def recipe_problem(self, preset: str, model: str, seconds: int) -> str | None:
-        """Why saved settings can no longer render, in words; None when they still can."""
-        if preset not in self.exposed_presets():
-            return "this effect is no longer available"
-        if model not in self.catalog():
-            return "this model is no longer available"
-        if seconds not in self.lengths(preset, model):
-            return f"this length is no longer available on {model}"
-        return None
+    def shot_models(self, backend: str | None = None) -> list[dict[str, Any]]:
+        backend = backend or backends.current(self.settings)[0]
+        models = load_image_models(self.settings.workflows_dir)
+        limits = {m.model: m.max_prompt for m in models.values()}
+        return [{**m, "max_prompt": limits[m["id"]]} for m in model_status.listing(self.settings, models, backend)]
+
+    def shots_unavailable(self, backend: str | None = None, model: str = "shot") -> str | None:
+        """Why this model can't generate here, in words; None when it can or the node list could not be read."""
+        backend = backend or backends.current(self.settings)[0]
+        spec = self._shot_spec(model)
+        ok, why = model_status.why_not(spec, backend, model_status.object_info(self.settings, backend))
+        if ok is not False:
+            return None
+        if backend == backends.LOCAL and spec.model == "shot":
+            why += ". Run `python scripts/download_models.py --models-dir <ComfyUI>/models --only shot`"
+        return f"{spec.label} is not ready: {why}."
+
+    def create_shot(self, prompt: str, aspect: str = "16:9", quality: str = "standard", count: int = 1,
+                    seed: int | None = None, parent_id: str | None = None, model: str = "shot") -> ShotRecord:
+        prompt = prompt.strip()
+        if not prompt:
+            raise ValueError("write a prompt first")
+        spec = self._shot_spec(model)
+        if len(prompt) > spec.max_prompt:
+            raise ValueError(f"{spec.label} takes up to {spec.max_prompt} characters; this prompt has {len(prompt)}")
+        width, height, steps = shotgen.plan(aspect, quality, count, spec.quality)
+        backend = backends.current(self.settings)[0]  # read once: what was checked is what the record keeps
+        if why := self.shots_unavailable(backend, spec.model):
+            raise ShotsUnavailable(why)
+        shot = self.store.create_shot(
+            prompt=prompt, aspect=aspect, quality=quality, width=width, height=height, steps=steps,
+            model=spec.label, seed=random.randint(1, 2**31 - 1) if seed is None else seed, count=count,
+            backend=backend, parent_id=parent_id)
+        self._queue.put(SHOT + shot.id)
+        return shot
+
+    def variation(self, shot_id: str) -> ShotRecord:
+        """The same prompt and settings with a new seed."""
+        base = self._shot(shot_id)
+        return self.create_shot(base.prompt, base.aspect, base.quality, base.count, parent_id=base.id, model=base.model)
+
+    def _shot(self, shot_id: str) -> ShotRecord:
+        shot = self.store.get_shot(shot_id)
+        if shot is None:
+            raise KeyError(shot_id)
+        return shot
+
+    def _run_shot(self, shot_id: str) -> None:
+        with self._seq_lock:
+            shot = self.store.get_shot(shot_id)
+            if shot is None or shot.status not in ("queued", "running"):
+                return
+            self._writing.add(shot_id)
+        try:
+            self._execute_shot(shot)
+        except Exception as e:  # noqa: BLE001 — surfaced to the user via the record
+            with self._submit_lock:
+                now = self.store.get_shot(shot_id)
+                if now is not None and now.status != "cancelled":
+                    self.store.update_shot(shot_id, status="failed", error=f"{type(e).__name__}: {e}"[:800])
+        finally:
+            self._handles.pop(shot_id, None)
+            with self._seq_lock:
+                self._writing.discard(shot_id)
+
+    def _execute_shot(self, shot: ShotRecord) -> None:
+        spec = self._shot_spec(shot.model)
+        client = self.client_for(shot.backend)
+        if shot.comfy_job_id:
+            handle = client.jobs.get(shot.comfy_job_id)
+        else:
+            wf = client.workflows.from_file(spec.workflow_file)
+            for slot, value in {"prompt": shot.prompt, "width": shot.width, "height": shot.height, "count": shot.count,
+                                "steps": shot.steps, "seed": shot.seed, "filename_prefix": f"seam/{shot.id}"}.items():
+                wf.set_input(*spec.slots[slot], value)
+            with self._submit_lock:
+                if self._shot(shot.id).status == "cancelled":
+                    return
+                self.store.update_shot(shot.id, submitting_at=time.time())
+                handle = client.submit(wf)
+                self.store.update_shot(shot.id, status="running", comfy_job_id=handle.id)
+        with self._submit_lock:
+            self._handles[shot.id] = handle
+            if self._shot(shot.id).status == "cancelled":
+                handle.cancel()
+                return
+        handle = handle.wait(timeout=self.settings.job_timeout_s)
+        if self._shot(shot.id).status == "cancelled":
+            return
+        if handle.status != "succeeded":
+            raise RuntimeError(f"comfy job {handle.id} {handle.status}: {handle.error}")
+        folder = self.settings.outputs_dir / "shots"
+        folder.mkdir(parents=True, exist_ok=True)
+        images = []
+        try:
+            for i, output in enumerate(handle.get_outputs(spec.output_node)):
+                name = f"{shot.id}_{i}.png"
+                output.to_file(folder / name)  # bytes as ComfyUI wrote them: the PNG carries its graph, prompt and seed
+                images.append({"name": name, "starred": False, "deleted_at": None})
+        except Exception:
+            self._unlink_shots(shot.id)
+            raise
+        if not images:
+            raise RuntimeError("the graph returned no images")
+        with self._submit_lock:
+            if self._shot(shot.id).status != "cancelled":
+                self.store.update_shot(shot.id, status="succeeded", images=images, error=None)
+                return
+        self._unlink_shots(shot.id)
+
+    def _unlink_shots(self, shot_id: str) -> None:
+        for path in (self.settings.outputs_dir / "shots").glob(f"{shot_id}_*.png"):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def cancel_shot(self, shot_id: str) -> ShotRecord:
+        shot = self._shot(shot_id)
+        if shot.status not in ("queued", "running"):
+            return shot
+        with self._submit_lock:
+            handle = self._handles.get(shot_id)
+            error = None
+            try:
+                if handle is None and shot.comfy_job_id:  # re-attached after a restart, still waiting for the worker
+                    handle = self.client_for(shot.backend).jobs.get(shot.comfy_job_id)
+                if handle is not None:
+                    handle.cancel()
+            except Exception as e:  # noqa: BLE001 — the user asked to stop: say what we could not do
+                error = f"could not stop it on ComfyUI ({type(e).__name__}); it may still be running there"
+            return self.store.update_shot(shot_id, status="cancelled", **({"error": error} if error else {}))
+
+    def dismiss_shot(self, shot_id: str) -> None:
+        """A generation that ended without images leaves the collection."""
+        with self._seq_lock:
+            shot = self._shot(shot_id)
+            if shot.status in ("queued", "running") or shot.images or shot_id in self._writing:
+                raise ValueError("only a generation that ended without images can be dismissed")
+            self.store.remove_shot(shot_id)
+
+    def shot_image(self, shot_id: str, name: str) -> Path:
+        """A file of this record, by the name the server gave it: no path from a request reaches the disk."""
+        shot = self._shot(shot_id)
+        entry = next((i for i in shot.images if i["name"] == name), None)
+        if entry is None or entry["deleted_at"]:
+            raise KeyError(name)
+        return self.settings.outputs_dir / "shots" / entry["name"]
+
+    def edit_image(self, shot_id: str, name: str, **changes: Any) -> ShotRecord:
+        with self._seq_lock:
+            shot = self._shot(shot_id)
+            if not any(i["name"] == name for i in shot.images):
+                raise KeyError(name)
+            return self.store.update_shot(shot_id, images=[{**i, **changes} if i["name"] == name else i for i in shot.images])
+
+    def purge_shots(self, everything: bool = False) -> int:
+        """Images the trash has held for TRASH_DAYS, or all of them. Shots used in a take are copies, so they stay."""
+        cutoff = time.time() - TRASH_DAYS * 86400
+        removed = 0
+        with self._seq_lock:
+            for shot in self.store.list_shots(limit=100_000):
+                if shot.id in self._writing:
+                    continue
+                gone = []
+                for image in shot.images:
+                    if image["deleted_at"] and (everything or image["deleted_at"] < cutoff):
+                        try:
+                            (self.settings.outputs_dir / "shots" / image["name"]).unlink(missing_ok=True)
+                            gone.append(image)
+                        except OSError:  # locked, on Windows: it waits for the next purge
+                            pass
+                if not gone:
+                    continue
+                removed += len(gone)
+                left = [i for i in shot.images if i not in gone]
+                if left:
+                    self.store.update_shot(shot.id, images=left)
+                else:
+                    self.store.remove_shot(shot.id)
+        return removed
 
     def sequence_receipt(self, seq_id: str) -> dict[str, Any]:
         """How a sequence was made: the ordered join (clips by sha256, each take with its own receipt)."""
@@ -791,6 +1006,9 @@ class Engine:
             job_id = self._queue.get()
             if job_id.startswith(SEQ):
                 self._reconcile(job_id[len(SEQ):])
+                continue
+            if job_id.startswith(SHOT):
+                self._run_shot(job_id[len(SHOT):])
                 continue
             with self._seq_lock:  # one step, so a purge never removes a take the worker is about to start
                 job = self.store.get(job_id)

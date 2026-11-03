@@ -1,5 +1,5 @@
 {
-  "_doc": "Named parameters -> [node_id, input] per API workflow. Generated from graph tracing on 2026-10-17. Runtime injection only through these maps. 'describe' is not a video model: it reads one shot (Gemma-4 E2B) for the prompt templates.",
+  "_doc": "Named parameters -> [node_id, input] per API workflow. Generated from graph tracing on 2026-10-17. Runtime injection only through these maps. 'describe' is not a video model: it reads one shot (Gemma-4 E2B) for the prompt templates. 'shot' is not a video model either: Z-Image-Turbo makes the images of the Shots collection.",
   "l23": {
     "workflow": "l23_transition.api.json",
     "output_node": "68",
@@ -315,6 +315,159 @@
       "seed": [
         "38",
         "seed"
+      ]
+    }
+  },
+  "shot": {
+    "workflow": "z_image.api.json",
+    "output_node": "9",
+    "slots": {
+      "prompt": [
+        "57:27",
+        "text"
+      ],
+      "width": [
+        "57:13",
+        "width"
+      ],
+      "height": [
+        "57:13",
+        "height"
+      ],
+      "count": [
+        "57:13",
+        "batch_size"
+      ],
+      "steps": [
+        "57:3",
+        "steps"
+      ],
+      "seed": [
+        "57:3",
+        "seed"
+      ],
+      "filename_prefix": [
+        "9",
+        "filename_prefix"
+      ]
+    },
+    "label": "Z-Image-Turbo",
+    "kind": "image",
+    "max_prompt": 4000,
+    "quality": {
+      "draft": [
+        0.6,
+        4
+      ],
+      "standard": [
+        1.0,
+        8
+      ],
+      "high": [
+        2.1,
+        8
+      ]
+    }
+  },
+  "shot_klein": {
+    "workflow": "flux2_klein.api.json",
+    "output_node": "9",
+    "label": "FLUX.2 Klein 4B",
+    "kind": "image",
+    "max_prompt": 4000,
+    "quality": {
+      "draft": [
+        0.6,
+        10
+      ],
+      "standard": [
+        1.0,
+        20
+      ],
+      "high": [
+        2.1,
+        20
+      ]
+    },
+    "slots": {
+      "prompt": [
+        "76",
+        "value"
+      ],
+      "width": [
+        "75:68",
+        "value"
+      ],
+      "height": [
+        "75:69",
+        "value"
+      ],
+      "count": [
+        "75:66",
+        "batch_size"
+      ],
+      "steps": [
+        "75:62",
+        "steps"
+      ],
+      "seed": [
+        "75:73",
+        "noise_seed"
+      ],
+      "filename_prefix": [
+        "9",
+        "filename_prefix"
+      ]
+    }
+  },
+  "shot_juggernaut": {
+    "workflow": "sdxl_juggernaut.api.json",
+    "output_node": "9",
+    "label": "Juggernaut XL",
+    "kind": "image",
+    "max_prompt": 600,
+    "quality": {
+      "draft": [
+        0.6,
+        15
+      ],
+      "standard": [
+        1.0,
+        30
+      ],
+      "high": [
+        1.4,
+        30
+      ]
+    },
+    "slots": {
+      "prompt": [
+        "6",
+        "text"
+      ],
+      "width": [
+        "5",
+        "width"
+      ],
+      "height": [
+        "5",
+        "height"
+      ],
+      "count": [
+        "5",
+        "batch_size"
+      ],
+      "steps": [
+        "3",
+        "steps"
+      ],
+      "seed": [
+        "3",
+        "seed"
+      ],
+      "filename_prefix": [
+        "9",
+        "filename_prefix"
       ]
     }
   }

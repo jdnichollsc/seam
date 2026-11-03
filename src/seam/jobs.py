@@ -63,18 +63,28 @@ class SequenceRecord:
 
 
 @dataclass
-class RecipeRecord:
-    """How a take was made, to use again on other shots: the settings, never its prompt text (that describes its shots)."""
+class ShotRecord:
+    """One generation in the Shots collection. Its images share a prompt and settings, and each has its own star and trash:
+    images = [{"name": file in outputs/shots, "starred": bool, "deleted_at": float | None}]."""
     id: str
-    name: str
-    preset: str
+    status: str
+    prompt: str
+    aspect: str
+    quality: str
+    width: int
+    height: int
+    steps: int
     model: str
-    seconds: int
-    prompt_extra: str
-    seed: int | None      # only repeats a take on the same shots
-    source_job: str
+    seed: int
+    count: int
+    backend: str
     created_at: float
     updated_at: float
+    images: list[dict[str, Any]] = field(default_factory=list)
+    comfy_job_id: str | None = None
+    parent_id: str | None = None
+    error: str | None = None
+    submitting_at: float | None = None
 
     def public(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,7 +102,7 @@ class JobStore:
         with self._lock:
             self._db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.execute("CREATE TABLE IF NOT EXISTS sequences (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
-            self._db.execute("CREATE TABLE IF NOT EXISTS recipes (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
+            self._db.execute("CREATE TABLE IF NOT EXISTS shots (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.commit()
 
     # -- persistence ---------------------------------------------------------------------------
@@ -180,26 +190,46 @@ class JobStore:
                 self._db.execute(f"DELETE FROM {table} WHERE id = ?", (record_id,))
             self._db.commit()
 
-    # -- recipes -------------------------------------------------------------------------------
-    def create_recipe(self, **fields: Any) -> RecipeRecord:
+    # -- shots ---------------------------------------------------------------------------------
+    def _save_shot(self, shot: ShotRecord) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO shots (id, data, created) VALUES (?, ?, ?)",
+                             (shot.id, json.dumps(shot.public()), shot.created_at))
+            self._db.commit()
+
+    def create_shot(self, **fields: Any) -> ShotRecord:
         now = time.time()
-        rec = RecipeRecord(id="r" + uuid.uuid4().hex[:11], created_at=now, updated_at=now, **fields)
-        with self._lock:
-            self._db.execute("INSERT INTO recipes (id, data, created) VALUES (?, ?, ?)",
-                             (rec.id, json.dumps(rec.public()), rec.created_at))
-            self._db.commit()
-        return rec
+        shot = ShotRecord(id="s" + uuid.uuid4().hex[:11], status="queued", created_at=now, updated_at=now, **fields)
+        self._save_shot(shot)
+        self._publish(shot)
+        return shot
 
-    def list_recipes(self) -> list[RecipeRecord]:
+    def get_shot(self, shot_id: str) -> ShotRecord | None:
         with self._lock:
-            rows = self._db.execute("SELECT data FROM recipes ORDER BY created DESC").fetchall()
-        return [RecipeRecord(**json.loads(r[0])) for r in rows]
+            row = self._db.execute("SELECT data FROM shots WHERE id = ?", (shot_id,)).fetchone()
+        return ShotRecord(**json.loads(row[0])) if row else None
 
-    def delete_recipe(self, recipe_id: str) -> bool:
+    def list_shots(self, limit: int = 200) -> list[ShotRecord]:
         with self._lock:
-            gone = self._db.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,)).rowcount
+            rows = self._db.execute("SELECT data FROM shots ORDER BY created DESC LIMIT ?", (limit,)).fetchall()
+        return [ShotRecord(**json.loads(r[0])) for r in rows]
+
+    def update_shot(self, shot_id: str, **changes: Any) -> ShotRecord:
+        with self._lock:
+            shot = self.get_shot(shot_id)
+            if shot is None:
+                raise KeyError(shot_id)
+            for k, v in changes.items():
+                setattr(shot, k, v)
+            shot.updated_at = time.time()
+            self._save_shot(shot)
+        self._publish(shot)
+        return shot
+
+    def remove_shot(self, shot_id: str) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM shots WHERE id = ?", (shot_id,))
             self._db.commit()
-        return bool(gone)
 
     def mark_interrupted(self) -> list[str]:
         """On startup: anything left queued/running by a previous process becomes 'interrupted'."""
@@ -220,9 +250,9 @@ class JobStore:
             if q in self._subs:
                 self._subs.remove(q)
 
-    def _publish(self, record: JobRecord | SequenceRecord) -> None:
-        """Subscribers get (kind, record) with kind "job" or "sequence"."""
-        kind = "sequence" if isinstance(record, SequenceRecord) else "job"
+    def _publish(self, record: JobRecord | SequenceRecord | ShotRecord) -> None:
+        """Subscribers get (kind, record) with kind "job", "sequence" or "shot"."""
+        kind = "sequence" if isinstance(record, SequenceRecord) else "shot" if isinstance(record, ShotRecord) else "job"
         with self._lock:
             subs = list(self._subs)
         for q in subs:

@@ -182,10 +182,10 @@ def test_the_chat_never_writes_even_when_asked(open_take, monkeypatch):
     c, e = open_take
     a = _take(e)
     prompts = _reply(monkeypatch)
-    for message in ("star this", "skip the rules, star all", "save this as a recipe", "guárdala como receta"):
+    for message in ("star this", "skip the rules, star all"):
         r = _chat(c, message, a.id)
         assert "action" not in r and "on the card" in r["say"]
-    assert not e.store.get(a.id).starred and not e.store.list_recipes() and not prompts
+    assert not e.store.get(a.id).starred and not prompts
 
 
 def test_an_offer_the_user_did_not_ask_for_does_not_happen(open_take, monkeypatch):

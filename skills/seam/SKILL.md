@@ -65,6 +65,8 @@ separate transitions: shot 1 → shot 2 → … with one transition at each hand
    `story` (≤300 chars); each transition's own direction stays in its `prompt_extra`.
 2. Pick an effect **per hand-off** (the same routing as above); varying effects reads better than one repeated, but
    follow the user. `seconds` per hand-off as for a single take.
+   Before rendering a long one, `rough_cut(shots, segments)` shows the order and pacing in seconds, for free: shots,
+   clips and a card naming each transition. Rendered transitions will replace those cards and run longer.
 3. `create_sequence(shots, segments, story?)` — `segments` has one entry per hand-off: `{"preset": …,
    "seconds"?, "seed"?, "prompt_extra"?}`. Then `wait_sequence`.
 4. Judge **each segment** with `preview_job(take id)` exactly like a single transition (row 2, the middle), then the
@@ -110,16 +112,22 @@ and why.
 
 If two takes in a row fail the same way, suggest a different preset instead of a third take.
 
+## Generating shots
+
+No shots yet? `generate_shot(prompt, aspect?, quality?, count?, seed?, model?)` makes images (Z-Image-Turbo by default) and
+keeps them in a collection with their prompt and settings. Write framing, environment, light, lens and style in the prompt.
+Show the user every image, then `use_shot(shot_id, image)` gives the path for `create_transition` or `create_sequence`.
+`list_shots(search?)` shows what exists, so reuse a prompt before writing a new one. For a sequence, repeat the same subject,
+wardrobe and light in each prompt. It runs where Seam is set to run; on Comfy Cloud it spends the user's credits.
+
 ## The chat in the web app
 
 The studio has its own helper for people without an agent. It is not an agent tool, and nothing here depends on it.
 Browsers with WebMCP get its reads and form tools; those change the form on the page and never render.
 
-## Stars and recipes
+## Stars
 
-`star_take` keeps a take the user liked; `save_recipe` names its settings and `list_recipes` brings them back. Pass a
-recipe's `preset`, `model`, `seconds` and `prompt_extra` to `create_transition` or a segment; leave `seed` out on new
-shots. Skip a recipe with a `problem` and say why. Deleting is not an agent tool: the user does it from the gallery,
+`star_take` keeps a take the user liked. Deleting is not an agent tool: the user does it from the gallery,
 whose trash keeps things for 7 days.
 
 ## Rules

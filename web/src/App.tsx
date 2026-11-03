@@ -1,3 +1,5 @@
+import { Icon } from './Icon'
+import { ShotCollection, ShotForm, type ShotTarget, useShotStudio } from './ShotStudio'
 import { createContext, Fragment, lazy, Suspense, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -18,7 +20,6 @@ import {
   type ModelRow,
   type Job,
   type Preset,
-  type Recipe,
   type Sequence,
   type Trash,
   type EditIn,
@@ -460,38 +461,6 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
   )
 }
 
-/* Icons: one stroke family (24 grid, 1.8 stroke), drawn here so nothing depends on an icon font. */
-const ICONS: Record<string, string> = {
-  download: 'M12 4v11m0 0-5-5m5 5 5-5M5 20h14',
-  graph: 'M4 6h6v5H4zM14 13h6v5h-6zM10 8.5h2.5a2 2 0 0 1 2 2V13',
-  refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6',
-  close: 'M6 6l12 12M18 6 6 18',
-  star: 'M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z',
-  trash: 'M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13M10 11v5M14 11v5',
-  bookmark: 'M6 3h12v18l-6-4-6 4z',
-  receipt: 'M7 3h10v18l-2.5-1.6L12 21l-2.5-1.6L7 21zM10 8h4M10 12h4',
-  upload: 'M12 16V5m0 0-4.5 4.5M12 5l4.5 4.5M5 19h14',
-  github: 'M9 19c-4 1.3-4-2-6-2.5m12 4.5v-3.4a3 3 0 0 0-.8-2.3c2.7-.3 5.6-1.3 5.6-6a4.6 4.6 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.7 11.7 0 0 0-6 0C6.6 2.6 5.6 2.9 5.6 2.9a4.3 4.3 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.2 9.3c0 4.6 2.9 5.7 5.6 6a3 3 0 0 0-.8 2.3V21',
-  play: 'M8 5.5v13l11-6.5z',
-  pause: 'M8 5v14M16 5v14',
-  sound: 'M4 9.5h3.5L12 5v14l-4.5-4.5H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11',
-  muted: 'M4 9.5h3.5L12 5v14l-4.5-4.5H4zM16.5 9.5l5 5M21.5 9.5l-5 5',
-  expand: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
-  up: 'M12 19V5m0 0-6 6m6-6 6 6',
-  left: 'M19 12H5m0 0 6-6m-6 6 6 6',
-  right: 'M5 12h14m0 0-6-6m6 6-6 6',
-  down: 'M12 5v14m0 0-6-6m6 6 6-6',
-  plus: 'M12 5v14M5 12h14',
-  dice: 'M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM8.5 8.5h.01M15.5 8.5h.01M12 12h.01M8.5 15.5h.01M15.5 15.5h.01',
-}
-
-function Icon({ name }: { name: keyof typeof ICONS }) {
-  return (
-    <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d={ICONS[name]} />
-    </svg>
-  )
-}
 
 /** Where takes render: the status chip opens the choice. The key is write-only: it goes to the local server, never back. */
 function BackendControl({ health, healthError, onChange }: {
@@ -613,7 +582,7 @@ type Pt = { x: number; y: number }
  * The graph's wires, measured from the live layout: links down the rail from node to node (Shots → Effect →
  * Direction → Make) and one across into OUTPUT. A fixed overlay, so they follow scroll and resize.
  */
-function Wires({ root, running }: { root: RefObject<HTMLDivElement | null>; running: boolean }) {
+function Wires({ root, running, layout }: { root: RefObject<HTMLDivElement | null>; running: boolean; layout: string }) {
   const svg = useRef<SVGSVGElement>(null)
   useEffect(() => {
     const el = root.current
@@ -699,7 +668,7 @@ function Wires({ root, running }: { root: RefObject<HTMLDivElement | null>; runn
       window.removeEventListener('resize', schedule)
       rail?.removeEventListener('scroll', schedule)
     }
-  }, [root])
+  }, [root, layout])  // Generate swaps the rail's nodes
 
   // The one authored loop: while a take renders, pulses run along every wire toward OUTPUT.
   useGSAP(
@@ -921,18 +890,15 @@ type HistoryProps = {
   onOpen: (job: Job) => void
   onOpenSeq: (seq: Sequence) => void
   onRetry: (job: Job) => void
-  onSaved: () => void
 }
 
 /** What was just moved to the trash, with the way back. */
 type Undo = { label: string; restore: () => Promise<unknown> }
 
-function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry, onSaved }: HistoryProps) {
+function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: HistoryProps) {
   const [filter, setFilter] = useState('all')
   const [undo, setUndo] = useState<Undo | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
-  const [naming, setNaming] = useState<string | null>(null)  // the take being saved as a recipe
-  const [name, setName] = useState('')
   const [trashTick, setTrashTick] = useState(0)
   const attempt = async (action: () => Promise<unknown>) => {
     setProblem(null)
@@ -951,12 +917,6 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry, onS
     await api.trashSequence(q.id)
     setUndo({ label: 'Sequence and its takes moved to the trash. Starred takes stay.', restore: () => api.restoreSequence(q.id) })
     setTrashTick((n) => n + 1)
-  })
-  const saveRecipe = (j: Job) => attempt(async () => {
-    await api.saveRecipe(j.id, name.trim())
-    setNaming(null)
-    setName('')
-    onSaved()
   })
   const preset = (id: string) => presets.find((p) => p.id === id)
   const effects = Array.from(new Set(jobs.map((j) => j.params.preset)))
@@ -1093,12 +1053,6 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry, onS
                         onClick={() => attempt(() => api.star(j.id, !j.starred))}>
                         <Icon name="star" />
                       </button>
-                      {done && (
-                        <button className="btn-icon" title="Save these settings as a recipe" aria-label="Save as a recipe"
-                          onClick={() => { setNaming(naming === j.id ? null : j.id); setName(name || p?.name || '') }}>
-                          <Icon name="bookmark" />
-                        </button>
-                      )}
                       {!ACTIVE.has(j.status) && !inSequence.has(j.id) && (
                         <button className="btn-icon" title="Move to the trash" aria-label="Move take to the trash" onClick={() => trashTake(j)}>
                           <Icon name="trash" />
@@ -1118,12 +1072,6 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry, onS
                         </>
                       )}
                     </div>
-                    {naming === j.id && (
-                      <form className="recipe-name" onSubmit={(e) => { e.preventDefault(); if (name.trim()) void saveRecipe(j) }}>
-                        <input aria-label="Recipe name" maxLength={80} autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-                        <button className="btn btn-quiet" disabled={!name.trim()}>Save</button>
-                      </form>
-                    )}
                   </div>
                 </li>
               )
@@ -1205,43 +1153,6 @@ function ChatPanel({ unavailable, onAction, onOffer, selection, backend }: { una
 }
 
 /** Saved settings of takes that came out well: the form takes them, the shots stay the user's. */
-function RecipeShelf({ recipes, presets, onUse, onRemove }: {
-  recipes: Recipe[]
-  presets: Preset[]
-  onUse: (r: Recipe) => void
-  onRemove: (r: Recipe) => void
-}) {
-  const models = useContext(ModelsContext)
-  if (recipes.length === 0) return null
-  return (
-    <section className="recipes" aria-label="Your recipes">
-      <div className="history-head">
-        <h2>Your recipes</h2>
-        <span className="total" aria-label={`${recipes.length} recipes`}>{recipes.length}</span>
-      </div>
-      <ol className="recipe-list">
-        {recipes.map((r) => (
-          <li key={r.id} className="recipe">
-            {r.poster_url ? <img src={r.poster_url} alt="" /> : <span className="recipe-blank" />}
-            <div className="recipe-body">
-              <strong>{r.name}</strong>
-              <span>
-                {presets.find((x) => x.id === r.preset)?.name ?? r.preset} · {models.find((m) => m.id === r.model)?.label ?? MODEL_LABEL[r.model] ?? r.model} · {r.seconds} s
-              </span>
-              {r.prompt_extra && <span className="recipe-extra">{r.prompt_extra}</span>}
-              {r.problem && <span className="recipe-problem">{r.problem}</span>}
-            </div>
-            <button className="btn btn-quiet" disabled={!!r.problem} onClick={() => onUse(r)}>Use</button>
-            <button className="btn-icon" title="Remove this recipe" aria-label={`Remove recipe ${r.name}`} onClick={() => onRemove(r)}>
-              <Icon name="close" />
-            </button>
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
-}
-
 /** The trash: restore anything for a while; emptying it asks twice, in place. */
 function TrashShelf({ tick }: { tick: number }) {
   const [trash, setTrash] = useState<Trash | null>(null)
@@ -1270,14 +1181,14 @@ function TrashShelf({ tick }: { tick: number }) {
       <ul className="trash-list">
         {trash.sequences.map((q) => (
           <li key={q.id}>
-            {q.poster_url ? <img src={q.poster_url} alt="" /> : <span className="recipe-blank" />}
+            {q.poster_url ? <img src={q.poster_url} alt="" /> : <span className="thumb-blank" />}
             <span>Sequence · {q.shots.length} shots</span>
             <button className="btn btn-quiet" onClick={() => run(() => api.restoreSequence(q.id))}>Restore</button>
           </li>
         ))}
         {loose.map((j) => (
           <li key={j.id}>
-            {j.poster_url ? <img src={j.poster_url} alt="" /> : <span className="recipe-blank" />}
+            {j.poster_url ? <img src={j.poster_url} alt="" /> : <span className="thumb-blank" />}
             <span>{j.params.preset} · seed {j.params.seed}</span>
             <button className="btn btn-quiet" onClick={() => run(() => api.restoreJob(j.id))}>Restore</button>
           </li>
@@ -1310,14 +1221,23 @@ type ShotListProps = {
   busy: boolean
   name: (preset: string) => string
   onAdd: (files: File[]) => void
+  takes: Job[]
+  onImport: (job: Job) => void
   onRemove: (i: number) => void
   onMove: (i: number, by: -1 | 1) => void
   onSelect: (i: number) => void
 }
 
+/** The sequence already ends on this transition's first shot: only its last shot is new. */
+const shotsChain = (shots: Upload[], job: Job) => {
+  const last = shots[shots.length - 1]
+  return !!last && !last.clip && last.id === job.params.image_a
+}
+
 /** Sequence shots in order, with the hand-off between each pair: pick one to edit its effect below. */
-function ShotList({ shots, segs, sel, busy, name, onAdd, onRemove, onMove, onSelect }: ShotListProps) {
+function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemove, onMove, onSelect }: ShotListProps) {
   const input = useRef<HTMLInputElement>(null)
+  const [picking, setPicking] = useState(false)
   const [over, setOver] = useState(false)
   return (
     <ol className="shotlist">
@@ -1385,6 +1305,34 @@ function ShotList({ shots, segs, sel, busy, name, onAdd, onRemove, onMove, onSel
           />
         </li>
       )}
+      {shots.length < SEQ_MAX && takes.length > 0 && (
+        <li className="take-pick">
+          <button className="take-pick-open" aria-expanded={picking} onClick={() => setPicking(!picking)}>
+            {picking ? 'Close' : 'Or add both shots of a transition'}
+          </button>
+          {picking && (
+            <ul className="take-pick-list">
+              {takes.map((t) => {
+                const needs = shots.length > 0 && shotsChain(shots, t) ? 1 : 2
+                return (
+                  <li key={t.id}>
+                    <button className="take-pick-row" disabled={busy || needs > SEQ_MAX - shots.length}
+                      onClick={() => { onImport(t); setPicking(false) }}>
+                      <img src={uploadUrl(t.params.image_a)} alt="" />
+                      <img src={uploadUrl(t.params.image_b)} alt="" />
+                      <span>
+                        {name(t.params.preset)} · {t.params.seconds ?? 5} s
+                        {(t.params.clip_a || t.params.clip_b) && <small>Takes its frames, not its clips</small>}
+                        {needs > SEQ_MAX - shots.length && <small>Needs room for {needs} shots</small>}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </li>
+      )}
     </ol>
   )
 }
@@ -1440,18 +1388,39 @@ export default function App() {
   const [showFull, setShowFull] = useState(true)
   const [notes, setNotes] = useState<{ a: Note | null; b: Note | null }>({ a: null, b: null })
   const { jobs, seqs, hydrate } = useLive()
-  const [recipes, setRecipes] = useState<Recipe[]>([])
-  const loadRecipes = useCallback(() => { api.recipes().then(setRecipes).catch(() => {}) }, [])
-  useEffect(loadRecipes, [loadRecipes])
   const [growing, setGrowing] = useState(false)
   const growLock = useRef(false)  // state updates lag a fast second drop; this does not
   const [story, setStory] = useState('')  // sequence mode: the idea of the whole film
   const [editingTake, setEditingTake] = useState<number | null>(null)  // the transition whose New take is open
   const [seqEditing, setSeqEditing] = useState(false)
   const seqEditLock = useRef(false)
-  const [mode, setMode] = useState<'pair' | 'seq'>('pair')
+  const [mode, setMode] = useState<'pair' | 'seq' | 'gen'>('pair')
+  const studio = useShotStudio(mode === 'gen', health?.backend)
+  const useGenerated = (target: ShotTarget, up: Upload) => {
+    if (target === 'first') {
+      setA(up)
+      read('a', up.id)
+    }
+    if (target === 'last') {
+      setB(up)
+      read('b', up.id)
+    }
+    if (target === 'seq') setShots((prev) => (prev.length >= SEQ_MAX ? prev : [...prev, up]))
+    setMode(target === 'seq' ? 'seq' : 'pair')
+  }
+  const modeTabs = (
+    <div className="mode">
+      <div className="seg seg-sm" role="tablist" aria-label="What to make">
+        <button role="tab" aria-selected={mode === 'pair'} onClick={() => setMode('pair')}>Transition</button>
+        <button role="tab" aria-selected={mode === 'seq'} onClick={() => setMode('seq')}>Sequence</button>
+        <button role="tab" aria-selected={mode === 'gen'} onClick={() => setMode('gen')}>Generate Shot</button>
+      </div>
+    </div>
+  )
   const [shots, setShots] = useState<Upload[]>([])
   const [segs, setSegs] = useState<Seg[]>([])
+  const [rough, setRough] = useState<string | null>(null)
+  const [roughBusy, setRoughBusy] = useState(false)
   const [sel, setSel] = useState(0)
   const [seqBusy, setSeqBusy] = useState(0)  // shots still uploading
   const [focusSeqId, setFocusSeqId] = useState<string | null>(null)
@@ -1556,6 +1525,30 @@ export default function App() {
     }
   }, [])
   const addShot = useCallback((file: File) => addShots([file]), [addShots])
+  /** Both shots of a transition, in its order, with its effect between them. What joins them to the sequence takes the form's effect. */
+  const importTake = (job: Job) => {
+    const still = (id: string): Upload => ({ id, url: uploadUrl(id), width: 0, height: 0 })
+    const chain = shotsChain(shots, job)
+    const added = chain ? [still(job.params.image_b)] : [still(job.params.image_a), still(job.params.image_b)]
+    if (shots.length + added.length > SEQ_MAX) return
+    const model = job.params.model && job.params.model !== presets.find((p) => p.id === job.params.preset)?.model ? job.params.model : ''
+    const own = { preset: job.params.preset, seconds: job.params.seconds ?? 5, extra: job.params.prompt_extra ?? '', model }
+    const bridge = shots.length > 0 && !chain ? [{ preset, seconds, extra: '', model: modelPick }] : []
+    setSegs([...segs.slice(0, Math.max(0, shots.length - 1)), ...bridge, own])
+    setShots([...shots, ...added])
+    if (shots.length === 0) {  // its hand-off is the one the Effect node now edits
+      setSel(0)
+      setPreset(own.preset)
+      setModelPick(model)
+      setSeconds(own.seconds)
+      setExtra(own.extra)
+    }
+  }
+  const roughFor = useRef(0)
+  useEffect(() => {  // a cut of what is no longer on the form misleads
+    roughFor.current += 1
+    setRough(null)
+  }, [shots, segs, mode])
   // one hand-off per pair of shots: a new shot gets the effect being edited, a removed one takes its hand-off along
   useEffect(() => {
     const n = Math.max(0, shots.length - 1)
@@ -1606,6 +1599,7 @@ export default function App() {
   // Paste an image: fills the first empty slot.
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
+      if (mode === 'gen') return  // its slots are out of sight
       const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/') || f.type.startsWith('video/'))
       if (file) {
         if (mode === 'seq') addShot(file)
@@ -1633,12 +1627,31 @@ export default function App() {
     { scope: root, dependencies: [focus?.id, focusDone, fseq?.output_url] },
   )
 
+  const shotsIn = () => shots.map((u) => (u.clip && u.first && u.last ? { clip: u.clip, first: u.first, last: u.last } : { image: u.id }))
+
+  const makeRoughCut = async () => {
+    setError(null)
+    setRoughBusy(true)
+    const asked = roughFor.current
+    try {
+      const cut = await api.roughCut({
+        shots: shotsIn(),
+        segments: segs.map((g) => ({ preset: g.preset === SURPRISE ? '' : g.preset, seconds: g.seconds })),
+      })
+      if (asked === roughFor.current) setRough(cut.url)
+    } catch (e) {
+      setError(`Could not make the rough cut: ${(e as Error).message}`)
+    } finally {
+      setRoughBusy(false)
+    }
+  }
+
   const makeSequence = async () => {
     setError(null)
     try {
       const seq = await api.createSequence({
         story: story.trim(),
-        shots: shots.map((u) => (u.clip && u.first && u.last ? { clip: u.clip, first: u.first, last: u.last } : { image: u.id })),
+        shots: shotsIn(),
         segments: segs.map((g) => {
           const pool = presets.filter((p) => allowedLengths(p, g.model ?? '', models).includes(g.seconds))
           return {
@@ -1824,18 +1837,7 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  /** A recipe sets the form, never the shots. Its seed stays out: a seed only repeats a take on the same shots. */
-  const applyRecipe = (r: Recipe) => {
-    setPreset(r.preset)
-    setModelPick(r.model !== presets.find((p) => p.id === r.preset)?.model ? r.model : '')
-    setSeconds(r.seconds)
-    setExtra(r.prompt_extra)
-    setSeed('')
-    setMode('pair')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  const selection: Selection | undefined = focusSeqId ? { sequence_id: focusSeqId } : focusId ? { job_id: focusId } : undefined
+  const selection: Selection | undefined = mode === 'gen' ? undefined : focusSeqId ? { sequence_id: focusSeqId } : focusId ? { job_id: focusId } : undefined
   const selectionNow = useRef(selection)
   selectionNow.current = selection
   const applyOffer = (o: HelperOffer) => {
@@ -1849,7 +1851,6 @@ export default function App() {
     }
   }
   const applyHelper = (a: HelperAction) => {
-    if (a.name === 'refresh') loadRecipes()
     if (a.name === 'pick_effect') setPreset(a.effect)
     if (a.name === 'set_direction') setExtra(a.text)
     if (a.name === 'set_length') {
@@ -1905,19 +1906,15 @@ export default function App() {
 
       <div className="studio">
         <aside className="rail" aria-label="Make a transition">
+          {mode === 'gen' ? <ShotForm studio={studio} tabs={modeTabs} /> : (<>
           <div className="rail-scroll">
           <Node wire="shots" title="Shots" socket="image"
             meta={mode === 'seq' ? `${shots.length} of ${SEQ_MAX}` : a && b ? 'Ready' : 'Image or clip'} className="shots">
-            <div className="mode">
-              <div className="seg seg-sm" role="tablist" aria-label="What to make">
-                <button role="tab" aria-selected={mode === 'pair'} onClick={() => setMode('pair')}>Two shots</button>
-                <button role="tab" aria-selected={mode === 'seq'} onClick={() => setMode('seq')}>Sequence</button>
-              </div>
-            </div>
+            {modeTabs}
             {mode === 'seq' ? (
               <ShotList shots={shots} segs={segs} sel={sel} busy={seqBusy > 0}
                 name={(id) => (id === SURPRISE ? 'Surprise me' : presetName(id))}
-                onAdd={addShots} onRemove={removeShot} onMove={moveShot} onSelect={setSel} />
+                onAdd={addShots} takes={jobs.filter((j) => j.status === 'succeeded').slice(0, 20)} onImport={importTake} onRemove={removeShot} onMove={moveShot} onSelect={setSel} />
             ) : (<>
             <div className="slots">
               <Slot
@@ -1969,6 +1966,11 @@ export default function App() {
           </Node>
           <Node wire="effect" title={mode === 'seq' && segs.length ? `Effect · ${sel + 1} → ${sel + 2}` : 'Effect'} socket="effect"
             meta={`${effectLabel} · ${seconds} s`} className="effects-node">
+            {mode === 'seq' && segs.length > 1 && (
+              <button className="apply-all" onClick={() => setSegs((prev) => prev.map((g) => ({ ...g, preset, seconds, model: modelPick })))}>
+                Use {effectLabel} on all {segs.length} transitions
+              </button>
+            )}
             {families.length > 2 && (
               <div className="seg" role="tablist" aria-label="Effect family">
                 {families.map((f) => (
@@ -2059,6 +2061,12 @@ export default function App() {
               disabled={!health || (mode === 'seq' ? shots.length < 2 || seqBusy > 0 : !a || !b)} onClick={make}>
               {mode === 'seq' ? `Make sequence${segs.length ? ` · ${segs.length} transition${segs.length > 1 ? 's' : ''}` : ''}` : running ? 'Add to queue' : 'Make transition'}
             </button>
+            {mode === 'seq' && shots.length >= 2 && (
+              <button className="btn" disabled={roughBusy || seqBusy > 0 || segs.some((g) => !g.preset)} onClick={makeRoughCut}>
+                {roughBusy ? 'Cutting…' : 'Rough cut · free, nothing renders'}
+              </button>
+            )}
+            {mode === 'seq' && rough && <video className="rough" src={rough} controls autoPlay muted playsInline aria-label="Rough cut of the sequence" />}
             <p className="make-note">
               {mode === 'seq'
                 ? shots.length < 2
@@ -2080,9 +2088,11 @@ export default function App() {
               </p>
             )}
           </div>
+          </>)}
         </aside>
 
         <main className="canvas">
+          {mode === 'gen' ? <ShotCollection studio={studio} onUse={useGenerated} /> : (<>
           {fseq ? (
           <Node
             title="Output"
@@ -2306,12 +2316,11 @@ export default function App() {
               onMake={(f, fx, dir, m) => grow({ job: focus }, f, fx, dir, m)} />
           )}
 
-          <RecipeShelf recipes={recipes} presets={presets} onUse={applyRecipe}
-            onRemove={(r) => { api.deleteRecipe(r.id).then(loadRecipes).catch((e) => setError((e as Error).message)) }} />
-          <History onSaved={loadRecipes} jobs={jobs} seqs={seqs} focusId={focusId} presets={presets} onOpen={reuse} onOpenSeq={openSeq} onRetry={(j) => refine(j)} />
+          <History jobs={jobs} seqs={seqs} focusId={focusId} presets={presets} onOpen={reuse} onOpenSeq={openSeq} onRetry={(j) => refine(j)} />
+          </>)}
         </main>
       </div>
-      <Wires root={root} running={running} />
+      <Wires root={root} running={running} layout={mode === 'gen' ? 'gen' : 'make'} />
       <ChatPanel unavailable={chatUnavailable} onAction={applyHelper} onOffer={applyOffer} selection={selection} backend={health?.backend} />
       {model && (
         <Suspense fallback={null}>

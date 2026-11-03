@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 _WINGET_FFMPEG = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"
 
@@ -178,6 +178,34 @@ def join(parts: list[Path], dst: Path, width: int, height: int, fps: float) -> P
                     "-movflags", "+faststart", str(tmp)], check=True, capture_output=True, timeout=120 + 60 * len(parts))
     tmp.replace(dst)
     return dst
+
+
+def _still(image: Path, dst: Path, seconds: float) -> Path:
+    _ensure_ffmpeg()
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-loop", "1", "-t", f"{seconds:.3f}", "-i", str(image), "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(dst)],
+                   check=True, capture_output=True, timeout=60)
+    return dst
+
+
+def _card(text: str, dst: Path, width: int, height: int) -> Path:
+    card = Image.new("RGB", (width, height))
+    ImageDraw.Draw(card).text((width / 2, height / 2), text, fill="white", anchor="mm",
+                              font=ImageFont.load_default(size=max(18, height // 20)))
+    card.save(dst)
+    return dst
+
+
+def rough_cut(shots: list[dict[str, str | None]], labels: list[str], dst: Path, work: Path, width: int, height: int,
+              hold: float = 1.5, gap: float = 0.8, fps: float = 24) -> Path:
+    """The order and pacing of a sequence with nothing rendered: each shot held, or its clip in full, and a black card
+    naming the transition that will go there. `work` holds the pieces until the join."""
+    parts: list[Path] = []
+    for i, shot in enumerate(shots):
+        parts.append(Path(shot["clip"]) if shot.get("clip") else _still(Path(str(shot["first"])), work / f"shot{i}.mp4", hold))
+        if i < len(labels):
+            parts.append(_still(_card(labels[i], work / f"card{i}.png", width, height), work / f"card{i}.mp4", gap))
+    return join(parts, dst, width, height, fps)
 
 
 def poster(video: Path, dst: Path, height: int = 480) -> Path:
