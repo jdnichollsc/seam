@@ -37,6 +37,8 @@ renders at a time; a 5 s clip takes about 40 s on an RTX 5090 (longer on the fir
      when the user wants a longer take
    - if the user asks for an effect list_presets does not return (fire, morph, …), say it is not available yet and
      offer the closest listed one
+   - no effect at all: `preset: "none"` with `prompt_extra` describing the camera and scene motion from A to B
+     ("the camera orbits her slowly as the street turns into a beach"); it is required with `none`
 3. `create_transition(image_a, image_b, preset)` with **local file paths** (plus `a_desc` / `b_desc` if you
    are correcting Seam's reading). Either side can be a short clip (1-6 s): the transition starts from clip
    A's last frame / lands on clip B's first, and the job adds `merged_url` (clip A + transition + clip B). Put in `prompt_extra` only what the user asked for, in their terms (keep their

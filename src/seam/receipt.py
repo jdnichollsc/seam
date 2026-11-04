@@ -11,6 +11,7 @@ from typing import Any
 
 from . import __version__
 from .jobs import JobRecord
+from .presets import NO_EFFECT
 from .workflows import WorkflowSpec, export_graph
 
 BUNDLE_README = """Seam take {id} as a ComfyUI workflow
@@ -31,7 +32,8 @@ def render_params(job: JobRecord, spec: WorkflowSpec) -> dict[str, Any]:
     """The slot values the engine sent for this job (only slots this graph has)."""
     p, x = job.params, job.extra
     values = {"prompt": x.get("prompt"), "seed": p.get("seed"), "seconds": p.get("seconds", 5),
-              "width": x.get("width"), "height": x.get("height"), "enhance_prompt": p.get("enhance", True)}
+              "width": x.get("width"), "height": x.get("height"), "enhance_prompt": p.get("enhance", True),
+              "lora_strength": 0 if p.get("preset") == NO_EFFECT else None}
     return {k: v for k, v in values.items() if k in spec.slots and v is not None}
 
 

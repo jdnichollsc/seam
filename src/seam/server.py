@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -27,7 +28,7 @@ from . import backend as backends
 from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
 from . import agent, catalog
-from .engine import TRASH_DAYS, BackendChanged, Engine, SequenceBusy, ShotsUnavailable, TakeInUse, TransitionRequest, store_clip, store_upload
+from .engine import ORBIT_FRAMES, TRASH_DAYS, BackendChanged, Engine, SequenceBusy, ShotsUnavailable, TakeInUse, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
 
 settings = get_settings()
@@ -560,8 +561,16 @@ def _shot_out(shot: Any) -> dict[str, Any]:
     d = shot if isinstance(shot, dict) else shot.public()
     d.pop("comfy_job_id", None)
     d.pop("submitting_at", None)
-    d["images"] = [{**i, "url": f"/outputs/shots/{i['name']}"} for i in d["images"]]
+    orbits = {o.image: o for o in _engine().store.list_orbits(d["id"])}  # the newest per image
+    d["images"] = [{**i, "url": f"/outputs/shots/{i['name']}", "orbit": _orbit_out(orbits.get(i["name"]))} for i in d["images"]]
     return d
+
+
+def _orbit_out(orbit: Any) -> dict[str, Any] | None:
+    if orbit is None:
+        return None
+    return {"id": orbit.id, "status": orbit.status, "error": orbit.error, "width": orbit.width, "height": orbit.height,
+            "frames": ORBIT_FRAMES, "progress": orbit.progress, "url": f"/outputs/orbits/{orbit.video}" if orbit.video else None}
 
 
 def _shot_call(action: Any) -> Any:
@@ -578,7 +587,8 @@ def _shot_call(action: Any) -> Any:
 @app.get("/api/shots")
 def list_shots(limit: int = 200) -> dict[str, Any]:
     e = _engine()
-    return {"shots": [_shot_out(s) for s in e.store.list_shots(limit=min(limit, 500))], "unavailable": e.shots_unavailable(), "models": e.shot_models()}
+    return {"shots": [_shot_out(s) for s in e.store.list_shots(limit=min(limit, 500))], "unavailable": e.shots_unavailable(), "models": e.shot_models(),
+            "orbit_unavailable": e.orbit_unavailable()}
 
 
 @app.post("/api/shots", status_code=201)
@@ -622,9 +632,31 @@ def edit_shot_image(shot_id: str, name: str, body: ImageEditIn) -> dict[str, Any
 
 
 @app.post("/api/shots/{shot_id}/images/{name}/use")
-def use_shot_image(shot_id: str, name: str) -> dict[str, Any]:
-    """The image as an ordinary upload: a copy, so transitions and sequences need no change and a trashed shot breaks nothing."""
-    return _upload_out(store_upload(settings, _shot_call(lambda: _engine().shot_image(shot_id, name))))
+def use_shot_image(shot_id: str, name: str, frame: int | None = None) -> dict[str, Any]:
+    """The image as an ordinary upload: a copy, so transitions and sequences need no change and a trashed shot breaks nothing.
+    With `frame`, that frame of the image's finished 360° orbit instead of the still."""
+    e = _engine()
+    if frame is None:
+        return _upload_out(store_upload(settings, _shot_call(lambda: e.shot_image(shot_id, name))))
+    png = _shot_call(lambda: e.orbit_frame(shot_id, name, frame))
+    try:
+        return _upload_out(store_upload(settings, png, name_hint="orbit"))
+    finally:
+        shutil.rmtree(png.parent, ignore_errors=True)
+
+
+@app.post("/api/shots/{shot_id}/images/{name}/orbit", status_code=201)
+def orbit_shot_image(shot_id: str, name: str) -> dict[str, Any]:
+    """A 360° orbit of the image (ORB360 on MiniMax-H3, local only): a few minutes on the GPU."""
+    _shot_call(lambda: _engine().create_orbit(shot_id, name))
+    return _shot_out(_shot_call(lambda: _engine()._shot(shot_id)))
+
+
+@app.post("/api/orbits/{orbit_id}/cancel")
+def cancel_orbit(orbit_id: str) -> dict[str, Any]:
+    e = _engine()
+    orbit = _shot_call(lambda: e.cancel_orbit(orbit_id))
+    return _shot_out(_shot_call(lambda: e._shot(orbit.shot_id)))
 
 
 @app.post("/api/rough-cut")
@@ -831,6 +863,11 @@ async def events() -> StreamingResponse:
             while True:
                 try:
                     kind, item = await asyncio.to_thread(q.get, True, 15)
+                    if kind == "orbit":  # the browser sees an orbit as a change of its shot
+                        shot = store.get_shot(item["shot_id"])
+                        if shot is None:
+                            continue
+                        kind, item = "shot", shot.public()
                     item = _seq_out(item, jobs=False) if kind == "sequence" else _shot_out(item) if kind == "shot" else _job_out(item)
                     yield f"event: {kind}\ndata: {json.dumps(item)}\n\n"
                 except Exception:  # queue.Empty → keep-alive

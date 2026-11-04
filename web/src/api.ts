@@ -13,7 +13,9 @@ export type Preset = {
 /** An image, or a clip: then `id` is the frame the transition uses and `clip` the video around it.
  *  Uploaded for a sequence (role mid), a clip also carries both ends: `first` (landed on) and `last` (left from). */
 /** One image of a generation in the Shots collection; star and trash are per image. */
-export type ShotImage = { name: string; url: string; starred: boolean; deleted_at: number | null }
+/** A 360° orbit of one image (ORB360): the newest for that image. */
+export type Orbit = { id: string; status: string; error: string | null; width: number; height: number; frames: number; progress: number; url: string | null }
+export type ShotImage = { name: string; url: string; starred: boolean; deleted_at: number | null; orbit: Orbit | null }
 /** One generation: a prompt and settings, and the images it made. */
 export type ImageModel = { id: string; label: string; available: boolean | null; reason: string; max_prompt: number }
 
@@ -241,7 +243,9 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  shots: () => call<{ shots: GeneratedShot[]; unavailable: string | null; models: ImageModel[] }>('/api/shots'),
+  shots: () => call<{ shots: GeneratedShot[]; unavailable: string | null; models: ImageModel[]; orbit_unavailable: string | null }>('/api/shots'),
+  orbitShotImage: (id: string, name: string) => call<GeneratedShot>(`/api/shots/${id}/images/${name}/orbit`, { method: 'POST' }),
+  cancelOrbit: (id: string) => call<GeneratedShot>(`/api/orbits/${id}/cancel`, { method: 'POST' }),
   createShot: (body: { prompt: string; aspect: string; quality: string; count: number; seed?: number; model: string }) =>
     call<GeneratedShot>('/api/shots', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   shotVariation: (id: string) => call<GeneratedShot>(`/api/shots/${id}/variations`, { method: 'POST' }),
@@ -249,7 +253,8 @@ export const api = {
   dismissShot: (id: string) => call<void>(`/api/shots/${id}`, { method: 'DELETE' }),
   editShotImage: (id: string, name: string, body: { starred?: boolean; trashed?: boolean }) =>
     call<GeneratedShot>(`/api/shots/${id}/images/${name}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-  useShotImage: (id: string, name: string) => call<Upload>(`/api/shots/${id}/images/${name}/use`, { method: 'POST' }),
+  useShotImage: (id: string, name: string, frame?: number) =>
+    call<Upload>(`/api/shots/${id}/images/${name}/use${frame === undefined ? '' : `?frame=${frame}`}`, { method: 'POST' }),
   purgeShots: () => call<{ removed: number }>('/api/shots/purge', { method: 'POST' }),
   roughCut: (body: { shots: ShotIn[]; segments: SegmentIn[] }) =>
     call<{ url: string; seconds: number }>('/api/rough-cut', {

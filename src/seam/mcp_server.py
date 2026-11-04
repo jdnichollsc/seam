@@ -106,7 +106,8 @@ async def create_transition(image_a: str, image_b: str, preset: str, seconds: in
 
     image_a / image_b: local file paths to images, or to short clips (1-6 s .mp4/.mov/.webm): with a clip, the
     transition starts from the last frame of clip A / lands on the first frame of clip B, and the job also gets a
-    merged video (clip A + transition + clip B, `merged_url`). preset: an id from list_presets. seconds: take length,
+    merged video (clip A + transition + clip B, `merged_url`). preset: an id from list_presets; "none" is no effect, the
+    prompt_extra alone directs the motion (then it is required). seconds: take length,
     one of the preset's `seconds` from list_presets (default 5). prompt_extra: extra direction appended
     to the preset. Seam reads both shots itself (local model) to describe them in the prompt; pass a_desc / b_desc
     only to correct that reading — a noun phrase like "a young woman with a calm smile in a red jacket on a rainy
