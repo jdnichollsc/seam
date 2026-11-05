@@ -90,6 +90,29 @@ class ShotRecord:
         return asdict(self)
 
 
+@dataclass
+class OrbitRecord:
+    """A 360° orbit of one shot image (ORB360): its own render, so cancel and restart recovery reach it after the shot
+    succeeded. video = file in outputs/orbits once it succeeds."""
+    id: str
+    shot_id: str
+    image: str
+    status: str
+    seed: int
+    width: int
+    height: int
+    created_at: float
+    updated_at: float
+    comfy_job_id: str | None = None
+    submitting_at: float | None = None
+    error: str | None = None
+    video: str | None = None
+    progress: float = 0.0
+
+    def public(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def _where(trashed: bool) -> str:
     return f"WHERE json_extract(data, '$.deleted_at') IS {'NOT ' if trashed else ''}NULL"
 
@@ -103,6 +126,7 @@ class JobStore:
             self._db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.execute("CREATE TABLE IF NOT EXISTS sequences (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.execute("CREATE TABLE IF NOT EXISTS shots (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
+            self._db.execute("CREATE TABLE IF NOT EXISTS orbits (id TEXT PRIMARY KEY, data TEXT NOT NULL, created REAL)")
             self._db.commit()
 
     # -- persistence ---------------------------------------------------------------------------
@@ -231,6 +255,52 @@ class JobStore:
             self._db.execute("DELETE FROM shots WHERE id = ?", (shot_id,))
             self._db.commit()
 
+    # -- orbits --------------------------------------------------------------------------------
+    def _save_orbit(self, orbit: OrbitRecord) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO orbits (id, data, created) VALUES (?, ?, ?)",
+                             (orbit.id, json.dumps(orbit.public()), orbit.created_at))
+            self._db.commit()
+
+    def create_orbit(self, **fields: Any) -> OrbitRecord:
+        now = time.time()
+        orbit = OrbitRecord(id="o" + uuid.uuid4().hex[:11], status="queued", created_at=now, updated_at=now, **fields)
+        self._save_orbit(orbit)
+        self._publish(orbit)
+        return orbit
+
+    def get_orbit(self, orbit_id: str) -> OrbitRecord | None:
+        with self._lock:
+            row = self._db.execute("SELECT data FROM orbits WHERE id = ?", (orbit_id,)).fetchone()
+        return OrbitRecord(**json.loads(row[0])) if row else None
+
+    def list_orbits(self, shot_id: str | None = None) -> list[OrbitRecord]:
+        """Oldest first, so the last one per image is the newest."""
+        with self._lock:
+            if shot_id is None:
+                rows = self._db.execute("SELECT data FROM orbits ORDER BY created").fetchall()
+            else:
+                rows = self._db.execute("SELECT data FROM orbits WHERE json_extract(data, '$.shot_id') = ? ORDER BY created",
+                                        (shot_id,)).fetchall()
+        return [OrbitRecord(**json.loads(r[0])) for r in rows]
+
+    def update_orbit(self, orbit_id: str, **changes: Any) -> OrbitRecord:
+        with self._lock:
+            orbit = self.get_orbit(orbit_id)
+            if orbit is None:
+                raise KeyError(orbit_id)
+            for k, v in changes.items():
+                setattr(orbit, k, v)
+            orbit.updated_at = time.time()
+            self._save_orbit(orbit)
+        self._publish(orbit)
+        return orbit
+
+    def remove_orbit(self, orbit_id: str) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM orbits WHERE id = ?", (orbit_id,))
+            self._db.commit()
+
     def mark_interrupted(self) -> list[str]:
         """On startup: anything left queued/running by a previous process becomes 'interrupted'."""
         ids = [j.id for j in self.list(limit=10_000) if j.status in ("queued", "running")]
@@ -250,9 +320,10 @@ class JobStore:
             if q in self._subs:
                 self._subs.remove(q)
 
-    def _publish(self, record: JobRecord | SequenceRecord | ShotRecord) -> None:
-        """Subscribers get (kind, record) with kind "job", "sequence" or "shot"."""
-        kind = "sequence" if isinstance(record, SequenceRecord) else "shot" if isinstance(record, ShotRecord) else "job"
+    def _publish(self, record: JobRecord | SequenceRecord | ShotRecord | OrbitRecord) -> None:
+        """Subscribers get (kind, record) with kind "job", "sequence", "shot" or "orbit"."""
+        kind = ("sequence" if isinstance(record, SequenceRecord) else "shot" if isinstance(record, ShotRecord)
+                else "orbit" if isinstance(record, OrbitRecord) else "job")
         with self._lock:
             subs = list(self._subs)
         for q in subs:

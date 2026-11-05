@@ -147,6 +147,16 @@ def clip_frame(video: Path, dst: Path, last: bool) -> Path:
     return dst
 
 
+def frame_n(video: Path, index: int, dst: Path) -> Path:
+    """Exactly frame `index` (zero-based) of a clip as a PNG: the frame an orbit's scrubber showed."""
+    _ensure_ffmpeg()
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(video), "-map", "0:v:0", "-vf", f"select=eq(n\\,{index})",
+                    "-frames:v", "1", "-fps_mode", "passthrough", str(dst)], check=True, capture_output=True, timeout=60)
+    if not dst.is_file():
+        raise ValueError(f"this orbit has no frame {index}")
+    return dst
+
+
 def merge_clips(transition: Path, dst: Path, clip_a: Path | None = None, clip_b: Path | None = None) -> Path:
     """clip A + transition + clip B as one video at the transition's size and frame rate (aspect follows the
     transition, which follows A)."""

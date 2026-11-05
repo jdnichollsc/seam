@@ -31,6 +31,10 @@ model runs on your machine and every take can be reopened, inspected and re-run 
 
 - **Web studio**: shots on the left, the take on the right, your gallery below. Images, 1–6 s clips or **3D models**
   as input, ten qualified effects (5 s takes, 10 s for Smoke, Water bend and Whip pan) or **Surprise me**, and three examples so you can try it in one click.
+- **No effect**: pick "No effect" and describe the camera and scene motion yourself; your prompt is the whole
+  direction between the two shots.
+- **360° orbit** (optional, your GPU only): turn a generated shot into a full orbit around its subject, drag to the
+  angle you want and use that frame as a first or last shot or in a sequence. It appears once its models are installed.
 - **Sequences**: more than two shots? Put them in order, pick an effect per hand-off, and Seam renders each
   transition and joins them into one video (clips play in full at their place). A bad hand-off gets a new take on
   its own; the others are reused. Or grow a story shot by shot: **Continue** a finished two-shot take with a new
@@ -222,6 +226,7 @@ browser / CLI / agent (MCP)
 | [LTX-2.3 Transition LoRA](https://huggingface.co/valiantcat/LTX-2.3-Transition-LORA) | optional transition style | see model card |
 | [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) + Qwen 3 4B | optional: the images of Generate shots, and the fictional test images in `dev/` | Apache 2.0 |
 | [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B) | optional: a model of Generate shots, when your ComfyUI or Comfy Cloud has it; Seam does not download it | Apache 2.0 |
+| MiniMax-H3 Ref2VA + ORB360 LoRA | optional: the 360° orbit of Generate shots, when your ComfyUI has them; Seam does not download them | MiniMax H3 Community License; ORB360: see its model card |
 | [Juggernaut XL v9](https://huggingface.co/RunDiffusion/Juggernaut-XL-v9) | optional: a model of Generate shots, when your ComfyUI or Comfy Cloud has it; Seam does not download it | CreativeML OpenRAIL-M (use restrictions apply) |
 
 Seam's code is MIT ([LICENSE](LICENSE)). The models keep their own licenses; read them before commercial use.

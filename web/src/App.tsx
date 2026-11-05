@@ -40,6 +40,11 @@ const MODEL_LABEL: Record<string, string> = { l25: 'LTX-2.5', l23: 'LTX-2.3', h3
 const ModelsContext = createContext<ModelRow[]>([])
 
 /** Lengths are qualified per effect on its own model; any model picked instead renders at its own lengths. */
+/** Characters used of a text field's limit (Seam's own: every model takes the longest prompt Seam builds). */
+function Count({ n, max }: { n: number; max: number }) {
+  return <small className={`count${n >= max ? ' is-full' : ''}`} aria-hidden="true">{n}/{max}</small>
+}
+
 function allowedLengths(effect: { model?: string; seconds?: number[] } | undefined, pick: string, models: ModelRow[]): number[] {
   if (!pick || pick === effect?.model) return effect?.seconds ?? [5]
   return models.find((m) => m.id === pick)?.seconds ?? [5]
@@ -86,6 +91,7 @@ function ModelSelect({ value, onChange, effectModel, disabled, compact, label = 
 const ACTIVE = new Set(['queued', 'running'])
 /** Effect picker value for "pick one of the qualified effects for me" (resolved when the take is made). */
 const SURPRISE = '__surprise__'
+const NO_EFFECT = 'none'  // the prompt alone directs the in-between; Surprise me never picks it
 const MOTION = '(prefers-reduced-motion: no-preference)'
 const REPO = 'https://github.com/jdnichollsc/seam'
 
@@ -235,7 +241,7 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
       </div>
       <ModelSelect value={modelChoice} onChange={setModelChoice} effectModel={effectModel} disabled={busy} />
       <label className="next-direction">
-        <span>What happens during this transition · optional</span>
+        <span>What happens during this transition · optional <Count n={direction.length} max={600} /></span>
         <textarea rows={2} maxLength={600} value={direction} disabled={busy}
           placeholder="She turns toward the camera and smiles, warm evening light"
           onChange={(e) => setDirection(e.target.value)} />
@@ -299,7 +305,7 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
         </div>
       </div>
       <label className="take-edit-wide">
-        <span>What happens during this change</span>
+        <span>What happens during this change <Count n={extra.length} max={600} /></span>
         <textarea rows={2} maxLength={600} value={extra} disabled={busy} placeholder="She turns toward the camera and smiles"
           onChange={(e) => setExtra(e.target.value)} />
       </label>
@@ -387,7 +393,7 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
   return (
     <section className="board" aria-label="Storyboard">
       <label className="board-story">
-        <span>The whole sequence</span>
+        <span>The whole sequence <Count n={b.story.length} max={300} /></span>
         <textarea rows={1} maxLength={300} value={b.story} disabled={!settled || busy}
           placeholder="One idea for the whole film: who, where, the mood. Every new transition uses it."
           onChange={(e) => edit((d) => ({ ...d, story: e.target.value }))} />
@@ -1463,8 +1469,9 @@ export default function App() {
       .catch((e) => setError(String(e.message ?? e)))
   }, [])
 
-  const families = useMemo(() => ['all', ...Array.from(new Set(presets.map((p) => p.category)))], [presets])
-  const shown = presets.filter((p) => family === 'all' || p.category === family)
+  const effects = useMemo(() => presets.filter((p) => p.id !== NO_EFFECT), [presets])
+  const families = useMemo(() => ['all', ...Array.from(new Set(effects.map((p) => p.category)))], [effects])
+  const shown = [...presets.filter((p) => p.id === NO_EFFECT), ...effects.filter((p) => family === 'all' || p.category === family)]
   const current = presets.find((p) => p.id === preset)
   const focus = jobs.find((j) => j.id === focusId) ?? null
   const fseq = seqs.find((q) => q.id === focusSeqId) ?? null
@@ -1533,7 +1540,7 @@ export default function App() {
     if (shots.length + added.length > SEQ_MAX) return
     const model = job.params.model && job.params.model !== presets.find((p) => p.id === job.params.preset)?.model ? job.params.model : ''
     const own = { preset: job.params.preset, seconds: job.params.seconds ?? 5, extra: job.params.prompt_extra ?? '', model }
-    const bridge = shots.length > 0 && !chain ? [{ preset, seconds, extra: '', model: modelPick }] : []
+    const bridge = shots.length > 0 && !chain ? [{ preset, seconds, extra: preset === NO_EFFECT ? extra : '', model: modelPick }] : []
     setSegs([...segs.slice(0, Math.max(0, shots.length - 1)), ...bridge, own])
     setShots([...shots, ...added])
     if (shots.length === 0) {  // its hand-off is the one the Effect node now edits
@@ -1553,7 +1560,7 @@ export default function App() {
   useEffect(() => {
     const n = Math.max(0, shots.length - 1)
     setSegs((prev) => (prev.length === n ? prev : prev.length > n ? prev.slice(0, n)
-      : [...prev, ...Array.from({ length: n - prev.length }, () => ({ preset, seconds, extra: '', model: modelPick }))]))
+      : [...prev, ...Array.from({ length: n - prev.length }, () => ({ preset, seconds, extra: preset === NO_EFFECT ? extra : '', model: modelPick }))]))
     setSel((v) => Math.min(v, Math.max(0, n - 1)))
   }, [shots.length]) // eslint-disable-line react-hooks/exhaustive-deps
   const removeShot = (i: number) => {
@@ -1648,12 +1655,18 @@ export default function App() {
 
   const makeSequence = async () => {
     setError(null)
+    const bare = segs.findIndex((g) => g.preset === NO_EFFECT && !g.extra.trim())
+    if (bare >= 0) {  // say which one and take the user there, rather than a button that does nothing
+      setSel(bare)
+      setError(`Transition ${bare + 1} → ${bare + 2} has No effect: describe its motion under "Describe the motion", or pick an effect.`)
+      return
+    }
     try {
       const seq = await api.createSequence({
         story: story.trim(),
         shots: shotsIn(),
         segments: segs.map((g) => {
-          const pool = presets.filter((p) => allowedLengths(p, g.model ?? '', models).includes(g.seconds))
+          const pool = effects.filter((p) => allowedLengths(p, g.model ?? '', models).includes(g.seconds))
           return {
             preset: g.preset === SURPRISE ? (pool[Math.floor(Math.random() * pool.length)]?.id ?? '') : g.preset,
             model: g.model || undefined,
@@ -1716,7 +1729,7 @@ export default function App() {
     setGrowing(true)
     try {
       const up = await api.upload(file, 'mid')
-      const pool = presets.filter((p) => allowedLengths(p, pick, models).includes(seconds))
+      const pool = effects.filter((p) => allowedLengths(p, pick, models).includes(seconds))
       const source = pool.length ? pool : presets  // none at this length on this model: the length moves below
       const chosen = effect === SURPRISE ? (source[Math.floor(Math.random() * source.length)]?.id ?? '') : effect
       const allowed = allowedLengths(presets.find((p) => p.id === chosen), pick, models)
@@ -1748,7 +1761,7 @@ export default function App() {
   }
   // effects offered next to the new shot: the ones qualified at the current length (Surprise me when there are several)
   const nextEffects = useMemo(() => {
-    const pool = presets.filter((p) => (p.seconds ?? [5]).includes(seconds)).map((p) => ({ id: p.id, name: p.name, model: p.model }))
+    const pool = effects.filter((p) => (p.seconds ?? [5]).includes(seconds)).map((p) => ({ id: p.id, name: p.name, model: p.model }))
     return pool.length > 1 ? [...pool, { id: SURPRISE, name: 'Surprise me' }] : pool
   }, [presets, seconds])
   // the Effect node's pick, else the effect the story used last, else none (the user picks it next to the shot)
@@ -1765,8 +1778,12 @@ export default function App() {
     if (mode === 'seq') return makeSequence()
     if (!a || !b) return
     setError(null)
+    if (preset === NO_EFFECT && !extra.trim()) {
+      setError('No effect needs a description: write the motion under "Describe the motion", or pick an effect.')
+      return
+    }
     try {
-      const pool = presets.filter((p) => lengthsOf(p).includes(seconds))
+      const pool = effects.filter((p) => lengthsOf(p).includes(seconds))
       const pick = preset === SURPRISE ? pool[Math.floor(Math.random() * pool.length)]?.id ?? '' : preset
       const job = await api.create({
         image_a: a.id,
@@ -1967,8 +1984,8 @@ export default function App() {
           <Node wire="effect" title={mode === 'seq' && segs.length ? `Effect · ${sel + 1} → ${sel + 2}` : 'Effect'} socket="effect"
             meta={`${effectLabel} · ${seconds} s`} className="effects-node">
             {mode === 'seq' && segs.length > 1 && (
-              <button className="apply-all" onClick={() => setSegs((prev) => prev.map((g) => ({ ...g, preset, seconds, model: modelPick })))}>
-                Use {effectLabel} on all {segs.length} transitions
+              <button className="apply-all" onClick={() => setSegs((prev) => prev.map((g) => ({ ...g, preset, seconds, model: modelPick, extra: g.extra.trim() || extra })))}>
+                Use {effectLabel}{extra.trim() ? " and this description" : ""} on all {segs.length} transitions
               </button>
             )}
             {families.length > 2 && (
@@ -1987,13 +2004,15 @@ export default function App() {
                     <Icon name="dice" />
                   </span>
                   <span className="effect-name">Surprise me</span>
-                  <span className="effect-meta">One of {presets.length}</span>
+                  <span className="effect-meta">One of {effects.length}</span>
                 </button>
               )}
               {shown.map((p) => (
-                <button key={p.id} role="option" aria-selected={preset === p.id} className="effect" onClick={() => setPreset(p.id)}>
+                <button key={p.id} role="option" aria-selected={preset === p.id} className={`effect${p.id === NO_EFFECT ? ' effect-surprise' : ''}`} onClick={() => setPreset(p.id)}>
                   <span className="effect-art">
-                    {p.preview_url ? (
+                    {p.id === NO_EFFECT ? (
+                      <Icon name="pencil" />
+                    ) : p.preview_url ? (
                       <video
                         src={p.preview_url}
                         poster={p.poster_url}
@@ -2038,15 +2057,15 @@ export default function App() {
           <Node wire="direction" title="Direction" socket="text" meta="Optional" className="direction">
             {mode === 'seq' && (
               <label className="story-field">
-                <span>The whole sequence</span>
+                <span>The whole sequence <Count n={story.length} max={300} /></span>
                 <textarea rows={2} value={story} maxLength={300} placeholder="One idea for the whole film: who, where, the mood"
                   onChange={(e) => setStory(e.target.value)} />
               </label>
             )}
-            <details className="more">
-              <summary>Describe the moment, set a seed</summary>
+            <details className="more" open={preset === NO_EFFECT || undefined}>
+              <summary>{preset === NO_EFFECT ? 'Describe the motion' : 'Describe the moment, set a seed'}</summary>
               <label>
-                <span>What happens during the change</span>
+                <span>{preset === NO_EFFECT ? 'The camera and the scene, from the first shot to the last (needed with No effect)' : 'What happens during the change'} <Count n={extra.length} max={600} /></span>
                 <textarea rows={2} value={extra} maxLength={600} placeholder="She turns toward the camera and smiles, warm evening light" onChange={(e) => setExtra(e.target.value)} />
               </label>
               <label>
@@ -2071,6 +2090,8 @@ export default function App() {
               {mode === 'seq'
                 ? shots.length < 2
                   ? 'Add at least two shots, in the order they play.'
+                  : segs.findIndex((g) => g.preset === NO_EFFECT && !g.extra.trim()) >= 0
+                  ? `Transition ${segs.findIndex((g) => g.preset === NO_EFFECT && !g.extra.trim()) + 1} has No effect: describe its motion under "Describe the motion".`
                   : onCloud
                     ? 'Each transition renders on Comfy Cloud, then Seam joins them · uses your credits'
                     : 'Each transition renders on your GPU, then Seam joins them · no credits'

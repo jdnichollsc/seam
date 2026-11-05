@@ -470,5 +470,37 @@
         "filename_prefix"
       ]
     }
+  },
+  "orbit": {
+    "workflow": "orbit.api.json",
+    "output_node": "92",
+    "fps": 24,
+    "label": "ORB360 orbit (MiniMax-H3)",
+    "kind": "orbit",
+    "backends": [
+      "local"
+    ],
+    "slots": {
+      "image": [
+        "137",
+        "image"
+      ],
+      "width": [
+        "136",
+        "width"
+      ],
+      "height": [
+        "136",
+        "height"
+      ],
+      "seed": [
+        "129",
+        "noise_seed"
+      ],
+      "filename_prefix": [
+        "92",
+        "filename_prefix"
+      ]
+    }
   }
 }

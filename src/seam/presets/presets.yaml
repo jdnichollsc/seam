@@ -234,3 +234,35 @@ presets:
     path: "The camera pushes toward a glowing screen in {a} that already shows {b}; it moves into the screen until {b} fills the whole frame."
     camera: smooth push-in into the screen
     sound: a soft electronic hum rising into a swoosh
+  - id: orbit
+    name: Orbit
+    status: candidate   # camera move, prompt only: two pairs x two seeds before it ships
+    category: camera
+    path: "The camera circles around {a} in a smooth half orbit at constant height, the subject staying centred while the background sweeps past; as the orbit completes, the scene around the subject has become {b}."
+    camera: smooth 180-degree orbit around the subject, constant distance and height
+    sound: a soft rising whoosh
+    model: l25
+  - id: dolly_in
+    name: Dolly In
+    status: candidate
+    category: camera
+    path: "The camera glides steadily forward toward {a}, the framing tightening on the subject; as it pushes closer the surroundings give way and the camera arrives on {b}."
+    camera: slow steady dolly-in, no shake, ending on the final framing
+    sound: a low swelling hum
+    model: l25
+  - id: crane_up
+    name: Crane Up
+    status: candidate
+    category: camera
+    path: "The camera rises smoothly upward from {a}, tilting down as it lifts so the view opens out from above, and settles high over {b}."
+    camera: smooth vertical crane up with a gentle tilt down, settling at the top
+    sound: an airy rising swell
+    model: l25
+  - id: none          # no effect: the user's prompt is the whole direction between the two shots
+    name: No effect
+    status: launch
+    category: none
+    path: ""
+    camera: ""
+    sound: ""
+    model: l25          # the default model when none is picked; its lengths are the model's own

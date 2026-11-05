@@ -23,8 +23,8 @@ from . import describe as shots
 from . import media, receipt, shotgen
 from .config import Settings
 from .describe import ShotText
-from .jobs import JobRecord, JobStore, SequenceRecord, ShotRecord
-from .presets import Preset, load_presets, render_prompt
+from .jobs import JobRecord, JobStore, OrbitRecord, SequenceRecord, ShotRecord
+from .presets import NO_EFFECT, Preset, load_presets, render_prompt
 from .workflows import WorkflowSpec, build, load_catalog, load_image_models, load_spec
 
 SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may still have rendered there "
@@ -34,6 +34,10 @@ SEQUENCE_SHOTS = (2, 8)
 CLOUD_GRACE_S = 30.0
 SEQ = "seq:"  # worker queue items for sequences (reconcile/join), next to plain job ids
 SHOT = "shot:"  # and for shot generations: one queue, so the GPU is never shared
+ORBIT = "orbit:"  # and for 360° orbits of a shot image
+ORBIT_FRAMES = 124  # one clockwise turn at 24 fps (ORB360)
+# sizes ORB360 was seen to work at, by aspect (width / height at least): landscape, square, portrait
+ORBIT_SIZES = ((1.2, (1152, 768)), (0.85, (800, 800)), (0.0, (832, 1024)))
 
 
 TRASH_DAYS = 7  # how long the trash keeps a take or a sequence before its files go
@@ -122,6 +126,13 @@ class Engine:
                 else:
                     error = SUBMIT_UNKNOWN if shot.submitting_at else "server restarted before submission"
                     self.store.update_shot(shot.id, status="interrupted", error=error)
+        for orbit in self.store.list_orbits():
+            if orbit.status in ("queued", "running"):
+                if orbit.comfy_job_id:
+                    self._queue.put(ORBIT + orbit.id)
+                else:
+                    error = SUBMIT_UNKNOWN if orbit.submitting_at else "server restarted before submission"
+                    self.store.update_orbit(orbit.id, status="interrupted", error=error)
         self._worker.start()
 
     # -- backends -------------------------------------------------------------------------------
@@ -150,6 +161,8 @@ class Engine:
     def lengths(self, preset_id: str, model: str) -> tuple[int, ...]:
         """An effect's lengths are qualified on its own model; on any other model, the model's lengths apply."""
         preset = self.presets[preset_id]
+        if preset_id == NO_EFFECT:
+            return self.spec(model).seconds
         if preset.status == "launch" and (preset.model or self.settings.model) == model:
             return preset.seconds
         return self.spec(model).seconds
@@ -174,6 +187,8 @@ class Engine:
     def validate(self, req: TransitionRequest) -> None:
         if req.preset not in self.exposed_presets():
             raise ValueError(f"unknown preset {req.preset!r}; choose one of {sorted(self.exposed_presets())}")
+        if req.preset == NO_EFFECT and not (req.prompt_extra.strip() or req.prompt_override.strip()):
+            raise ValueError("No effect needs a prompt: describe the motion between the two shots")
         model = self.model_for(req)
         catalog = self.catalog()
         if model not in catalog:
@@ -895,6 +910,140 @@ class Engine:
                 raise KeyError(name)
             return self.store.update_shot(shot_id, images=[{**i, **changes} if i["name"] == name else i for i in shot.images])
 
+    # -- orbits ---------------------------------------------------------------------------------
+    def orbit_unavailable(self, backend: str | None = None) -> str | None:
+        """Why a 360° orbit can't render here, in words; None when it can or the node list could not be read."""
+        backend = backend or backends.current(self.settings)[0]
+        spec = self.spec("orbit")
+        ok, why = model_status.why_not(spec, backend, model_status.object_info(self.settings, backend))
+        return None if ok is not False else f"{spec.label} is not ready: {why}."
+
+    def create_orbit(self, shot_id: str, name: str) -> OrbitRecord:
+        """A 360° orbit of one shot image; one at a time per image, and a new one replaces the old once it succeeds."""
+        if why := self.orbit_unavailable():
+            raise ShotsUnavailable(why)
+        with self._seq_lock:
+            path = self.shot_image(shot_id, name)
+            if any(o.image == name and o.status in ("queued", "running") for o in self.store.list_orbits(shot_id)):
+                raise ValueError("this image's orbit is already rendering")
+            ratio = (lambda w, h: w / h)(*media.image_size(path))
+            width, height = next(size for least, size in ORBIT_SIZES if ratio >= least)
+            orbit = self.store.create_orbit(shot_id=shot_id, image=name, seed=random.randint(1, 2**31 - 1),
+                                            width=width, height=height)
+        self._queue.put(ORBIT + orbit.id)
+        return orbit
+
+    def _orbit(self, orbit_id: str) -> OrbitRecord:
+        orbit = self.store.get_orbit(orbit_id)
+        if orbit is None:
+            raise KeyError(orbit_id)
+        return orbit
+
+    def _run_orbit(self, orbit_id: str) -> None:
+        with self._seq_lock:
+            orbit = self.store.get_orbit(orbit_id)
+            if orbit is None or orbit.status not in ("queued", "running"):
+                return
+            self._writing.add(orbit_id)
+        try:
+            self._execute_orbit(orbit)
+        except Exception as e:  # noqa: BLE001 — surfaced to the user via the record; the still stays as it was
+            with self._submit_lock:
+                now = self.store.get_orbit(orbit_id)
+                if now is not None and now.status != "cancelled":
+                    self.store.update_orbit(orbit_id, status="failed", error=f"{type(e).__name__}: {e}"[:800])
+        finally:
+            self._handles.pop(orbit_id, None)
+            with self._seq_lock:
+                self._writing.discard(orbit_id)
+
+    def _execute_orbit(self, orbit: OrbitRecord) -> None:
+        spec = self.spec("orbit")
+        client = self.client_for(backends.LOCAL)
+        if orbit.comfy_job_id:
+            handle = client.jobs.get(orbit.comfy_job_id)
+        else:
+            wf = client.workflows.from_file(spec.workflow_file)
+            wf.set_input(*spec.slots["image"], client.assets.from_file(self.shot_image(orbit.shot_id, orbit.image)))
+            for slot, value in {"width": orbit.width, "height": orbit.height, "seed": orbit.seed,
+                                "filename_prefix": f"seam/{orbit.id}"}.items():
+                wf.set_input(*spec.slots[slot], value)
+            with self._submit_lock:
+                if self._orbit(orbit.id).status == "cancelled":
+                    return
+                self.store.update_orbit(orbit.id, submitting_at=time.time())
+                handle = client.submit(wf)
+                self.store.update_orbit(orbit.id, status="running", comfy_job_id=handle.id)
+        with self._submit_lock:
+            self._handles[orbit.id] = handle
+            if self._orbit(orbit.id).status == "cancelled":
+                handle.cancel()
+                return
+        try:
+            for ev in handle.events():  # the card's progress bar; wait() below reports the outcome
+                if isinstance(ev, Progress) and ev.value is not None:
+                    self.store.update_orbit(orbit.id, progress=round(float(ev.value), 3))
+                elif isinstance(ev, StatusChange) and ev.status == "cancelled":
+                    break
+        except Exception:  # noqa: BLE001 — a lost event stream only loses the bar
+            pass
+        handle = handle.wait(timeout=self.settings.job_timeout_s)
+        if self._orbit(orbit.id).status == "cancelled":
+            return
+        if handle.status != "succeeded":
+            raise RuntimeError(f"comfy job {handle.id} {handle.status}: {handle.error}")
+        folder = self.settings.outputs_dir / "orbits"
+        folder.mkdir(parents=True, exist_ok=True)
+        dst = folder / f"{orbit.id}.mp4"
+        outputs = handle.get_outputs(spec.output_node)
+        if not outputs:
+            raise RuntimeError("the graph returned no video")
+        outputs[0].to_file(dst)
+        with self._submit_lock:
+            if self._orbit(orbit.id).status == "cancelled":
+                dst.unlink(missing_ok=True)
+                return
+            self.store.update_orbit(orbit.id, status="succeeded", video=dst.name, error=None)
+        for old in self.store.list_orbits(orbit.shot_id):  # the new orbit replaces the image's older ones
+            if old.image == orbit.image and old.id != orbit.id and old.status not in ("queued", "running"):
+                self._remove_orbit(old)
+
+    def _remove_orbit(self, orbit: OrbitRecord) -> None:
+        if orbit.video:
+            try:
+                (self.settings.outputs_dir / "orbits" / orbit.video).unlink(missing_ok=True)
+            except OSError:  # locked, on Windows: the row goes, the file waits for the next purge of its image
+                pass
+        self.store.remove_orbit(orbit.id)
+
+    def cancel_orbit(self, orbit_id: str) -> OrbitRecord:
+        orbit = self._orbit(orbit_id)
+        if orbit.status not in ("queued", "running"):
+            return orbit
+        with self._submit_lock:
+            handle = self._handles.get(orbit_id)
+            error = None
+            try:
+                if handle is None and orbit.comfy_job_id:
+                    handle = self.client_for(backends.LOCAL).jobs.get(orbit.comfy_job_id)
+                if handle is not None:
+                    handle.cancel()
+            except Exception as e:  # noqa: BLE001 — the user asked to stop: say what we could not do
+                error = f"could not stop it on ComfyUI ({type(e).__name__}); it may still be running there"
+            return self.store.update_orbit(orbit_id, status="cancelled", **({"error": error} if error else {}))
+
+    def orbit_frame(self, shot_id: str, name: str, frame: int) -> Path:
+        """Exactly the frame the scrubber showed, from this image's finished orbit, as a PNG in a temp folder."""
+        if not 0 <= frame < ORBIT_FRAMES:
+            raise ValueError(f"frame must be 0-{ORBIT_FRAMES - 1}")
+        self.shot_image(shot_id, name)  # the image itself must still be there (not trashed)
+        done = [o for o in self.store.list_orbits(shot_id) if o.image == name and o.status == "succeeded" and o.video]
+        if not done:
+            raise ValueError("this image has no finished orbit")
+        video = self.settings.outputs_dir / "orbits" / done[-1].video
+        work = Path(tempfile.mkdtemp(dir=self.settings.outputs_dir))
+        return media.frame_n(video, frame, work / f"{done[-1].id}_{frame}.png")
+
     def purge_shots(self, everything: bool = False) -> int:
         """Images the trash has held for TRASH_DAYS, or all of them. Shots used in a take are copies, so they stay."""
         cutoff = time.time() - TRASH_DAYS * 86400
@@ -914,6 +1063,10 @@ class Engine:
                 if not gone:
                     continue
                 removed += len(gone)
+                names = {i["name"] for i in gone}
+                for orbit in self.store.list_orbits(shot.id):
+                    if orbit.image in names and orbit.id not in self._writing:
+                        self._remove_orbit(orbit)
                 left = [i for i in shot.images if i not in gone]
                 if left:
                     self.store.update_shot(shot.id, images=left)
@@ -1010,6 +1163,9 @@ class Engine:
             if job_id.startswith(SHOT):
                 self._run_shot(job_id[len(SHOT):])
                 continue
+            if job_id.startswith(ORBIT):
+                self._run_orbit(job_id[len(ORBIT):])
+                continue
             with self._seq_lock:  # one step, so a purge never removes a take the worker is about to start
                 job = self.store.get(job_id)
                 run = job is not None and job.status not in ("cancelled", "succeeded", "failed")
@@ -1048,6 +1204,8 @@ class Engine:
                                       "seconds": req.seconds * spec.fps + 1 if spec.seconds_as_frames else req.seconds}
             if "width" in spec.slots:
                 params.update(width=width, height=height)
+            if req.preset == NO_EFFECT and "lora_strength" in spec.slots:
+                params["lora_strength"] = 0  # an effect LoRA would put its own transition back in
             if "enhance_prompt" in spec.slots:
                 # P0: the in-graph enhancer (local Gemma-4 E2B) fixes LTX-2.5 dissolves and end-jumps
                 params["enhance_prompt"] = req.enhance

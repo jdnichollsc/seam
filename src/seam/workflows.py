@@ -49,7 +49,7 @@ def load_spec(workflows_dir: Path, model: str) -> WorkflowSpec:
 def load_catalog(workflows_dir: Path) -> dict[str, WorkflowSpec]:
     """The models a transition can pick: every entry with a label (the shot reader has none)."""
     data = json.loads((workflows_dir / "slots.json").read_text(encoding="utf-8"))
-    return {k: load_spec(workflows_dir, k) for k, v in data.items() if isinstance(v, dict) and v.get("label") and v.get("kind") != "image"}
+    return {k: load_spec(workflows_dir, k) for k, v in data.items() if isinstance(v, dict) and v.get("label") and v.get("kind", "open") in ("open", "partner")}
 
 
 def load_image_models(workflows_dir: Path) -> dict[str, WorkflowSpec]:
