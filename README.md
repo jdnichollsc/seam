@@ -33,6 +33,9 @@ model runs on your machine and every take can be reopened, inspected and re-run 
   as input, ten qualified effects (5 s takes, 10 s for Smoke, Water bend and Whip pan) or **Surprise me**, and three examples so you can try it in one click.
 - **No effect**: pick "No effect" and describe the camera and scene motion yourself; your prompt is the whole
   direction between the two shots.
+- **Models**: one panel lists every model per feature (transitions, Generate shot, 360° orbit) and whether it is
+  ready on your GPU and on Comfy Cloud. A missing local model is one click away: its files, size and licenses,
+  then a download into your ComfyUI models folder once you accept them.
 - **360° orbit** (optional, your GPU only): turn a generated shot into a full orbit around its subject, drag to the
   angle you want and use that frame as a first or last shot or in a sequence. It appears once its models are installed.
 - **Sequences**: more than two shots? Put them in order, pick an effect per hand-off, and Seam renders each

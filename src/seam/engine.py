@@ -22,6 +22,7 @@ from . import models as model_status
 from . import describe as shots
 from . import media, receipt, shotgen
 from .config import Settings
+from .downloads import command, set_for
 from .describe import ShotText
 from .jobs import JobRecord, JobStore, OrbitRecord, SequenceRecord, ShotRecord
 from .presets import NO_EFFECT, Preset, load_presets, render_prompt
@@ -767,8 +768,8 @@ class Engine:
         ok, why = model_status.why_not(spec, backend, model_status.object_info(self.settings, backend))
         if ok is not False:
             return None
-        if backend == backends.LOCAL and spec.model == "shot":
-            why += ". Run `python scripts/download_models.py --models-dir <ComfyUI>/models --only shot`"
+        if backend == backends.LOCAL and why == "model files not installed" and (s := set_for(spec.model)):
+            why += f". Get them under Models, or run `{command(s.id)}`"
         return f"{spec.label} is not ready: {why}."
 
     def create_shot(self, prompt: str, aspect: str = "16:9", quality: str = "standard", count: int = 1,

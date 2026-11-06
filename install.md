@@ -34,9 +34,16 @@ git clone https://github.com/jdnichollsc/seam && cd seam
 uv run python scripts/download_models.py --models-dir "<path to ComfyUI>/models" --only l25
 ```
 
-`--only l25` is everything the launch effects use (LTX-2.5 + the Gemma-4 E2B shot reader). LTX-2.3 + its transition
-LoRA (~39 GB more) is optional: no launch effect uses it today; drop `--only l25` to fetch it too. `seam doctor` lists it
-as optional.
+`--only l25` is everything the launch effects use (LTX-2.5 + the Gemma-4 E2B shot reader). Without `--only` the
+script fetches the two default sets, `l25` and `shot` (Z-Image-Turbo for Generate shot). Every other set is optional
+and named with `--only`: `l23` (LTX-2.3 + its transition LoRA), `wan22`, `shot_klein`, `shot_juggernaut` and `orbit`
+(MiniMax-H3 Ref2VA + ORB360, the 360° orbit). The script prints each set's licenses; read them first.
+
+Or get them from the app: start Seam with `SEAM_MODELS_DIR` set to the same ComfyUI `models` folder, open **Models**
+in the header, and pick a missing model. It shows the files, their size, your free disk and every license; tick that
+you accept them and it downloads (one set at a time, resumable). Gated files (LTX-2.5) still need `hf auth login` on
+this machine: Seam never asks for a token in the browser. Downloads are only offered on your GPU and only when Seam
+runs on localhost.
 
 Desktop users: the models folder is in Desktop's settings (e.g. `%LOCALAPPDATA%\Comfy-Desktop\ComfyUI-Shared\models`).
 Restart ComfyUI afterwards so it sees the new files.
@@ -77,7 +84,8 @@ uv run seam serve                         # http://127.0.0.1:7860
 
 Environment variables (all optional): `SEAM_BACKEND` (`local` or `cloud`; overrides the app's choice), `COMFY_BASE_URL` (default `http://127.0.0.1:8189`), `COMFY_API_KEY`,
 `SEAM_COMFYUI_URL` (for `seam doctor`'s model check, default `http://127.0.0.1:8188`), `SEAM_PORT` (7860),
-`SEAM_DATA_DIR` (`~/.seam`: uploads, outputs, job database).
+`SEAM_DATA_DIR` (`~/.seam`: uploads, outputs, job database, `licenses.json` of accepted model licenses),
+`SEAM_MODELS_DIR` (your ComfyUI `models` folder; set, the app can download missing models into it).
 
 Smoke test without the UI:
 

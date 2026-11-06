@@ -68,13 +68,38 @@ def why_not(spec: WorkflowSpec, backend: str, info: dict[str, Any] | None) -> tu
     return True, ""
 
 
+def state(spec: WorkflowSpec, backend: str, info: dict[str, Any] | None) -> tuple[str, str]:
+    """(state, reason) for the Models panel: ready | missing (files) | needs_nodes (no download fixes it) |
+    not_offered | not_checked."""
+    available, reason = why_not(spec, backend, info)
+    if available:
+        return "ready", ""
+    if available is None:
+        return "not_checked", reason
+    if reason == "model files not installed":
+        return "missing", reason
+    if reason == "ComfyUI does not have its nodes":
+        return "needs_nodes", "update ComfyUI or install the node pack; downloading weights does not fix it"
+    return "not_offered", reason
+
+
+def cached_info(settings: Settings, backend: str) -> dict[str, Any] | None:
+    with _lock:
+        hit = _cache.get(_cache_key(settings, backend))
+    return hit[1] if hit and time.monotonic() - hit[0] < CACHE_S else None
+
+
 def listing(settings: Settings, catalog: dict[str, WorkflowSpec], backend: str, refresh: bool = False) -> list[dict[str, Any]]:
     info = object_info(settings, backend, refresh)
+    other = backends.CLOUD if backend == backends.LOCAL else backends.LOCAL
+    other_info = cached_info(settings, other)
     out = []
     for spec in catalog.values():
         available, reason = why_not(spec, backend, info)
+        elsewhere = why_not(spec, other, other_info)[0] if available is False else None
         out.append({"id": spec.model, "label": spec.label, "kind": spec.kind, "seconds": list(spec.seconds),
-                    "available": available, "reason": reason})
+                    "available": available, "reason": reason,
+                    "ready_elsewhere": ("Comfy Cloud" if other == backends.CLOUD else "your GPU") if elsewhere else None})
     return out
 
 

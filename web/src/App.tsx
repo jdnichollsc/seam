@@ -1,5 +1,6 @@
 import { Icon } from './Icon'
 import { ShotCollection, ShotForm, type ShotTarget, useShotStudio } from './ShotStudio'
+import { ModelsDialog, ModelsLink, OpenModelsContext, unavailableNote } from './Models'
 import { createContext, Fragment, lazy, Suspense, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -63,7 +64,7 @@ function ModelSelect({ value, onChange, effectModel, disabled, compact, label = 
   const own = models.find((m) => m.id === effectModel)?.label ?? MODEL_LABEL[effectModel ?? '']
   const row = (m: ModelRow) => (
     <option key={m.id} value={m.id} disabled={m.available === false}>
-      {m.label}{m.available === false ? ` (${m.reason})` : ''}
+      {m.label}{unavailableNote(m)}
     </option>
   )
   const others = models.filter((m) => m.id !== effectModel)
@@ -85,6 +86,7 @@ function ModelSelect({ value, onChange, effectModel, disabled, compact, label = 
           Not reviewed with this effect.{picked.kind === 'partner' ? ' Uses credits on a paid provider.' : ''}
         </small>
       )}
+      {models.some((m) => m.available === false) && <ModelsLink />}
     </label>
   )
 }
@@ -1492,13 +1494,24 @@ export default function App() {
     if (presets.length && !offers(seconds)) setSeconds(preset === SURPRISE ? 5 : lengthsOf(current)[0])
   }, [preset, presets, modelPick, models]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const [modelsOpen, setModelsOpen] = useState(false)
+  const [modelsAt, setModelsAt] = useState(0)  // bumped when a download lands: the pickers re-read what can render
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => subscribe({  // a set can finish with the Models panel closed: the pickers still learn about it
+    download: (d) => {
+      if (d.status !== 'done') return
+      setModelsAt(Date.now())
+      setNotice('New models are installed: the pickers are up to date')
+      setTimeout(() => setNotice(null), 6000)
+    },
+  }), [])
   useEffect(() => {  // what can render depends on the backend; a pick that cannot goes back to the default
     if (!health) return
-    api.models().then((r) => {
+    api.models(modelsAt > 0).then((r) => {
       setModels(r.models)
       setModelPick((m) => (r.models.find((x) => x.id === m)?.available === false ? '' : m))
     }).catch(() => {})
-  }, [health?.backend]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [health?.backend, modelsAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (mode !== 'seq' || !segs[sel]) return
@@ -1901,6 +1914,7 @@ export default function App() {
   const videoUrl = focus && (showFull && focus.merged_url ? focus.merged_url : focus.output_url)
 
   return (
+    <OpenModelsContext.Provider value={() => setModelsOpen(true)}>
     <ModelsContext.Provider value={models}>
     <div className="app" ref={root}>
       <header className="top">
@@ -1914,6 +1928,9 @@ export default function App() {
         </a>
         <p className="tagline">Two shots in, one transition out. Open models, your GPU or Comfy Cloud, every take a ComfyUI workflow.</p>
         <div className="top-end">
+          <button className="btn btn-quiet models-open" onClick={() => setModelsOpen(true)} title="Which models are ready on your GPU and on Comfy Cloud; get the missing ones">
+            <Icon name="download" /> Models
+          </button>
           <BackendControl health={health} healthError={healthError} onChange={(backend) => setHealth((h) => (h ? { ...h, backend } : h))} />
           <a className="btn-icon" href={REPO} target="_blank" rel="noreferrer" title="Seam on GitHub" aria-label="Seam on GitHub">
             <Icon name="github" />
@@ -1921,6 +1938,8 @@ export default function App() {
         </div>
       </header>
 
+      {modelsOpen && <ModelsDialog onClose={() => setModelsOpen(false)} onReady={() => setModelsAt(Date.now())} />}
+      {notice && !modelsOpen && <p className="app-toast" role="status">{notice}</p>}
       <div className="studio">
         <aside className="rail" aria-label="Make a transition">
           {mode === 'gen' ? <ShotForm studio={studio} tabs={modeTabs} /> : (<>
@@ -2356,5 +2375,6 @@ export default function App() {
       )}
     </div>
     </ModelsContext.Provider>
+    </OpenModelsContext.Provider>
   )
 }

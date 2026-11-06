@@ -1,3 +1,4 @@
+import { ModelsLink, unavailableNote } from './Models'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from './Icon'
 import { api, subscribe, type GeneratedShot, type ImageModel, type Orbit, type ShotImage, type Upload } from './api'
@@ -39,7 +40,7 @@ export function useShotStudio(active: boolean, backend?: string) {
         setModel((now) => (r.models.find((m) => m.id === now)?.available !== false ? now : r.models.find((m) => m.available !== false)?.id ?? now))
       }).catch((e) => setError((e as Error).message))
     }
-    return subscribe({ shot: merge, open: load })
+    return subscribe({ shot: merge, open: load, download: (d) => d.status === 'done' && load() })  // new models: Shots can do more
   }, [active, backend, merge])  // another backend can change what Shots can do
 
   const attempt = useCallback(async (action: () => Promise<unknown>) => {
@@ -99,8 +100,9 @@ export function ShotForm({ studio, tabs }: { studio: ShotStudio; tabs: ReactNode
             <label className="shot-field">
               <span>Model</span>
               <select value={s.model} onChange={(e) => s.setModel(e.target.value)}>
-                {s.models.map((m) => <option key={m.id} value={m.id} disabled={m.available === false}>{m.label}{m.available === false ? ` (${m.reason})` : ''}</option>)}
+                {s.models.map((m) => <option key={m.id} value={m.id} disabled={m.available === false}>{m.label}{unavailableNote(m)}</option>)}
               </select>
+              {s.models.some((m) => m.available === false) && <ModelsLink />}
             </label>
             <label className="shot-field">
               <span>Prompt <small className={over ? 'shot-over' : undefined}>{s.prompt.length}/{limit}</small></span>
@@ -265,8 +267,10 @@ function ImageCard({ studio, shot, image, onUse }: { studio: ShotStudio; shot: G
               <a className="btn-icon" href={image.url} download={image.name} title="Download image" aria-label="Download image"><Icon name="download" /></a>
               <button className={`btn-icon${image.starred ? ' is-on' : ''}`} aria-pressed={image.starred} title={image.starred ? 'Remove the star' : 'Star'}
                 aria-label={image.starred ? 'Remove the star' : 'Star this image'} onClick={() => edit({ starred: !image.starred })}><Icon name="star" /></button>
-              {canOrbit && !orbitBusy && (
-                <button className="btn-icon" title={orbitDone ? 'Orbit 360° again (replaces this one when done)' : 'Orbit 360°: a full turn around this image, a few minutes on your GPU'}
+              {!orbitBusy && (  // shown when it cannot run too, so the orbit is never a hidden feature
+                <button className="btn-icon" disabled={!canOrbit}
+                  title={s.backend === 'cloud' ? 'Orbit 360°: your GPU only (switch to Your GPU)' : s.orbitUnavailable
+                    ? `Orbit 360°: ${s.orbitUnavailable}` : orbitDone ? 'Orbit 360° again (replaces this one when done)' : 'Orbit 360°: a full turn around this image, a few minutes on your GPU'}
                   aria-label="Make a 360° orbit" onClick={() => s.attempt(async () => s.merge(await api.orbitShotImage(shot.id, image.name)))}><Icon name="orbit" /></button>
               )}
               <button className="btn-icon" title="Move to the trash" aria-label="Move image to the trash" onClick={() => edit({ trashed: true })}><Icon name="trash" /></button>

@@ -9,11 +9,11 @@ import urllib.request
 
 from . import backend as backends
 from .config import PACKAGE_DIR, get_settings
+from .downloads import command, set_for
 from .presets import load_presets
 from .workflows import load_spec, missing_slots
 
 MODEL_EXT = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
-DOWNLOAD_SET = {"l25": "l25", "chat": "l25", "describe": "l25", "l23": "l23"}  # workflow → scripts/download_models.py --only <set>
 
 
 def model_files(graph: dict) -> list[tuple[str, str, str]]:
@@ -147,7 +147,7 @@ def _check_comfyui(s, presets, check) -> None:
                 if model in needed:
                     check(present, f"{model}: {filename}",
                           f"run `python scripts/download_models.py --models-dir <ComfyUI>/models --only "
-                          f"{DOWNLOAD_SET.get(model, model)}`")
+                          f"{(set_for(model).id if set_for(model) else model)}`")
                 elif not present:
                     missing.append(filename)
             if model not in needed:
