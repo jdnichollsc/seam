@@ -27,9 +27,11 @@ from . import media, receipt, shotgen
 from . import backend as backends
 from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
+from .downloads import SETS, Downloads, set_for
 from . import agent, catalog
 from .engine import ORBIT_FRAMES, TRASH_DAYS, BackendChanged, Engine, SequenceBusy, ShotsUnavailable, TakeInUse, TransitionRequest, store_clip, store_upload
 from .jobs import JobStore
+from .workflows import load_image_models, load_spec
 
 settings = get_settings()
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -39,11 +41,12 @@ CLIP_ID = re.compile(r"^[0-9a-f]{16}\.mp4$")
 SEQ_ID = re.compile(r"^s[0-9a-f]{11}$")
 VIDEO_TYPES = ("video/mp4", "video/quicktime", "video/webm")
 engine: Engine | None = None
+downloads: Downloads | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global engine
+    global engine, downloads
     settings.ensure_dirs()
     if backends.current(settings)[0] == backends.CLOUD and not _is_loopback(settings.host):
         # no authentication here: anyone who can reach this server could spend the key's credits
@@ -51,6 +54,9 @@ async def lifespan(app: FastAPI):
                            "or run `seam backend local`")
     engine = Engine(settings, JobStore(settings.db_path))
     engine.start()
+    # a finished set: re-read ComfyUI's node list so the pickers see the new files without waiting for the cache
+    downloads = Downloads(settings.models_dir, settings.data_dir, engine.store.publish,
+                          on_done=lambda: model_status.object_info(settings, backends.LOCAL, refresh=True))
     yield
 
 
@@ -299,6 +305,84 @@ def list_models(refresh: bool = False) -> dict[str, Any]:
     """The models a transition can pick, and whether each can render on the current backend. Downloads nothing."""
     backend = backends.current(settings)[0]
     return {"backend": backend, "models": model_status.listing(settings, _engine().catalog(), backend, refresh)}
+
+
+def _downloads() -> Downloads:
+    if downloads is None:
+        raise HTTPException(503, "engine not started")
+    return downloads
+
+
+def _download_blocker() -> str | None:
+    """Why this server cannot fetch models (the browser then shows the CLI command); None when it can."""
+    if not _is_loopback(settings.host):
+        return "Downloads are only available when Seam runs on localhost"
+    if backends.current(settings)[0] != backends.LOCAL:
+        return "Seam renders on Comfy Cloud: its models are provided there, nothing to download"
+    if not settings.models_dir or not settings.models_dir.is_dir():
+        return "Set SEAM_MODELS_DIR to your ComfyUI models folder and restart Seam, or use the command"
+    return None
+
+
+class Accept(BaseModel):
+    accept: bool = False
+
+
+@app.get("/api/downloads")
+def list_downloads() -> dict[str, Any]:
+    """Every model per feature, ready or not on your GPU and on Comfy Cloud, and the sets Seam can fetch."""
+    e = _engine()
+    local = model_status.object_info(settings, backends.LOCAL)
+    cloud = model_status.object_info(settings, backends.CLOUD) if backends.cloud_key(settings)[0] else None
+    features = [("transitions", e.catalog()), ("shots", load_image_models(settings.workflows_dir)),
+                ("orbit", {"orbit": load_spec(settings.workflows_dir, "orbit")})]
+    models = []
+    for feature, specs in features:
+        for spec in specs.values():
+            ls, lr = model_status.state(spec, backends.LOCAL, local)
+            cs, cr = model_status.state(spec, backends.CLOUD, cloud)
+            if cloud is None and backends.CLOUD in spec.backends:
+                cs, cr = "not_checked", "add a Comfy Cloud key to check"
+            ms = set_for(spec.model)
+            models.append({"id": spec.model, "label": spec.label, "kind": spec.kind, "feature": feature,
+                           "set": ms.id if ms else None, "local": {"state": ls, "reason": lr},
+                           "cloud": {"state": cs, "reason": cr}})
+    d = _downloads()
+    blocker = _download_blocker()
+    sets = d.listing()
+    if backends.current(settings)[0] == backends.CLOUD:
+        for row in sets:  # "provided there" is only true for models Comfy Cloud offers
+            cloud_states = {m["cloud"]["state"] for m in models if m["set"] == row["id"]}
+            if cloud_states and cloud_states <= {"not_offered"}:
+                row["blocker"] = "Not offered on Comfy Cloud: switch to Your GPU to download it"
+    return {"backend": backends.current(settings)[0], "blocker": blocker, "free": d.free(),
+            "models": models, "sets": sets}
+
+
+@app.post("/api/downloads/{set_id}", status_code=202)
+def start_download(set_id: str, body: Accept) -> dict[str, Any]:
+    if why := _download_blocker():
+        raise HTTPException(403 if "localhost" in why else 409, why)
+    if set_id not in SETS:
+        raise HTTPException(404, f"unknown model set {set_id!r}")
+    try:
+        _downloads().start(set_id, body.accept)
+    except ValueError as err:
+        raise HTTPException(422, str(err)) from None
+    except RuntimeError as err:
+        raise HTTPException(409, str(err)) from None
+    return next(x for x in _downloads().listing() if x["id"] == set_id)
+
+
+@app.post("/api/downloads/{set_id}/cancel")
+def cancel_download(set_id: str) -> dict[str, Any]:
+    if not _is_loopback(settings.host):
+        raise HTTPException(403, "Downloads are only available when Seam runs on localhost")
+    if set_id not in SETS:
+        raise HTTPException(404, f"unknown model set {set_id!r}")
+    if not _downloads().cancel(set_id):
+        raise HTTPException(409, "nothing of this set is downloading")
+    return {"ok": True}
 
 
 @app.get("/api/presets")
@@ -863,6 +947,9 @@ async def events() -> StreamingResponse:
             while True:
                 try:
                     kind, item = await asyncio.to_thread(q.get, True, 15)
+                    if kind == "download":  # its own state, not a record
+                        yield f"event: download\ndata: {json.dumps(item)}\n\n"
+                        continue
                     if kind == "orbit":  # the browser sees an orbit as a change of its shot
                         shot = store.get_shot(item["shot_id"])
                         if shot is None:

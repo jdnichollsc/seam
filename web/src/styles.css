@@ -620,3 +620,32 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 
 .count { float: right; margin-left: 8px; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; text-transform: none; letter-spacing: 0; }
 .count.is-full { color: var(--danger); }
+
+/* Models: every model per feature, ready or not on your GPU and on Comfy Cloud */
+.models-open { gap: 6px; }
+.models-dialog { width: min(860px, calc(100vw - 32px)); }
+.models-body { display: grid; gap: 18px; padding: 4px 16px 16px; max-height: 72vh; overflow: auto; }
+.models-feature h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+.models-feature ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.models-row { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--ink-raise); }
+.models-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.models-name { flex: 1 1 200px; min-width: 0; }
+.models-name small { color: var(--dim); }
+.model-pill { padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 12px; white-space: nowrap; color: var(--dim); }
+.model-pill-where { color: var(--muted); }
+.model-pill.is-ready { border-color: var(--ok); color: var(--ok); }
+.model-pill.is-missing { border-color: var(--yellow); color: var(--yellow); }
+.model-pill.is-needs_nodes { border-color: var(--danger); color: var(--danger); }
+.models-toast { margin: 0; padding: 8px 12px; border-radius: var(--r-ctl); background: rgba(139, 227, 161, 0.12); color: var(--ok); }
+.get-set { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.get-files, .get-licenses { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.get-files li { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.get-files li.is-present { color: var(--dim); }
+.get-licenses a { color: var(--text); }
+.get-total, .get-note { margin: 0; color: var(--dim); font-size: 13px; }
+.get-note code { overflow-wrap: anywhere; }
+.get-accept { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.get-set > .btn { justify-self: start; gap: 6px; }
+.models-link { justify-self: start; font-size: 12.5px; }
+.app-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 50; margin: 0; padding: 10px 16px;
+  border-radius: var(--r-ctl); background: var(--ink-raise); border: 1px solid var(--ok); color: var(--ok); }

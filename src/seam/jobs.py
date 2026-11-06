@@ -324,10 +324,13 @@ class JobStore:
         """Subscribers get (kind, record) with kind "job", "sequence", "shot" or "orbit"."""
         kind = ("sequence" if isinstance(record, SequenceRecord) else "shot" if isinstance(record, ShotRecord)
                 else "orbit" if isinstance(record, OrbitRecord) else "job")
+        self.publish(kind, record.public())
+
+    def publish(self, kind: str, payload: dict) -> None:
         with self._lock:
             subs = list(self._subs)
         for q in subs:
             try:
-                q.put_nowait((kind, record.public()))
+                q.put_nowait((kind, payload))
             except queue.Full:
                 pass

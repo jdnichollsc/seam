@@ -17,7 +17,7 @@ export type Preset = {
 export type Orbit = { id: string; status: string; error: string | null; width: number; height: number; frames: number; progress: number; url: string | null }
 export type ShotImage = { name: string; url: string; starred: boolean; deleted_at: number | null; orbit: Orbit | null }
 /** One generation: a prompt and settings, and the images it made. */
-export type ImageModel = { id: string; label: string; available: boolean | null; reason: string; max_prompt: number }
+export type ImageModel = { id: string; label: string; available: boolean | null; reason: string; max_prompt: number; ready_elsewhere?: string | null }
 
 export type GeneratedShot = {
   id: string
@@ -75,7 +75,19 @@ export type Sequence = {
 
 export type SegmentIn = { preset: string; model?: string; seconds?: number; seed?: number; prompt_extra?: string }
 /** A model a transition can pick. available: false disabled with a reason, null when it could not be checked. */
-export type ModelRow = { id: string; label: string; kind: 'open' | 'partner'; seconds: number[]; available: boolean | null; reason: string }
+export type ModelRow = { id: string; label: string; kind: 'open' | 'partner'; seconds: number[]; available: boolean | null; reason: string; ready_elsewhere?: string | null }
+export type ModelAvailability = { state: 'ready' | 'missing' | 'needs_nodes' | 'not_offered' | 'not_checked'; reason: string }
+export type DownloadState = { set: string; status: 'running' | 'done' | 'failed' | 'cancelled'; file: string | null; done: number; total: number; error: string | null }
+export type DownloadSet = {
+  id: string; label: string; enables: string[]; default: boolean; size: number; missing: number; remaining: number; gated: boolean; command: string
+  blocker?: string
+  files: { folder: string; name: string; size: number; gated: boolean; present: boolean }[]
+  licenses: { name: string; url: string; note: string }[]; accepted: boolean; state: DownloadState | null
+}
+export type DownloadsState = {
+  backend: BackendName; blocker: string | null; free: number | null; sets: DownloadSet[]
+  models: { id: string; label: string; kind: string; feature: string; set: string | null; local: ModelAvailability; cloud: ModelAvailability }[]
+}
 export type ShotIn = { image: string } | { clip: string; first: string; last: string }
 /** order: current shot numbers in the new order; transitions: number in the NEW order → its effect (new hand-offs) */
 export type EditIn = { order: number[]; transitions?: Record<string, SegmentIn>; story?: string; expected_updated_at?: number }
@@ -189,6 +201,10 @@ export const api = {
     call<BackendState>('/api/backend/key', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key }) }),
   clearCloudKey: () => call<BackendState>('/api/backend/key', { method: 'DELETE' }),
   presets: () => call<Preset[]>('/api/presets'),
+  downloads: () => call<DownloadsState>('/api/downloads'),
+  startDownload: (set: string) =>
+    call<DownloadSet>(`/api/downloads/${set}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accept: true }) }),
+  cancelDownload: (set: string) => call<{ ok: boolean }>(`/api/downloads/${set}/cancel`, { method: 'POST' }),
   jobs: () => call<Job[]>('/api/jobs?limit=60'),
   upload: (file: File, role: 'a' | 'b' | 'mid') => {
     const body = new FormData()
@@ -292,7 +308,7 @@ export const api = {
   cancelSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/cancel`, { method: 'POST' }),
   assembleSequence: (id: string) => call<Sequence>(`/api/sequences/${id}/assemble`, { method: 'POST' }),
   estimate: (seconds = 5, model?: string) => call<Estimate>(`/api/estimate?seconds=${seconds}${model ? `&model=${model}` : ''}`),
-  models: () => call<{ backend: BackendName; models: ModelRow[] }>('/api/models'),
+  models: (refresh = false) => call<{ backend: BackendName; models: ModelRow[] }>(`/api/models${refresh ? '?refresh=true' : ''}`),
   examples: () => call<Example[]>('/api/examples'),
   loadExample: (id: string) => call<{ a: Upload; b: Upload; preset: string }>(`/api/examples/${id}`, { method: 'POST' }),
 }
@@ -302,7 +318,7 @@ export const receiptUrl = (id: string) => `/api/jobs/${id}/receipt`
 export const comfyBundleUrl = (id: string) => `/api/jobs/${id}/comfyui.zip`
 export const sequenceReceiptUrl = (id: string) => `/api/sequences/${id}/receipt`
 
-type Listeners = { job?: (job: Job) => void; sequence?: (seq: Sequence) => void; shot?: (shot: GeneratedShot) => void; open?: () => void }
+type Listeners = { job?: (job: Job) => void; sequence?: (seq: Sequence) => void; shot?: (shot: GeneratedShot) => void; download?: (d: DownloadState) => void; open?: () => void }
 
 /** Live job and sequence updates over server-sent events; `open` fires on connect and on every reconnect (updates
  *  sent while disconnected are lost, so fetch the current state then). Returns an unsubscribe function. */
@@ -312,6 +328,7 @@ export function subscribe(on: Listeners): () => void {
   if (on.job) es.addEventListener('job', (e) => on.job!(JSON.parse((e as MessageEvent).data) as Job))
   if (on.shot) es.addEventListener('shot', (e) => on.shot!(JSON.parse((e as MessageEvent).data) as GeneratedShot))
   if (on.sequence) es.addEventListener('sequence', (e) => on.sequence!(JSON.parse((e as MessageEvent).data) as Sequence))
+  if (on.download) es.addEventListener('download', (e) => on.download!(JSON.parse((e as MessageEvent).data) as DownloadState))
   return () => es.close()
 }
 
