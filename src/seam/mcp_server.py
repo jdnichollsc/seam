@@ -187,11 +187,13 @@ def _seq_brief(seq: dict[str, Any]) -> dict[str, Any]:
     if seq.get("output_url"):
         out["video_url"] = f"{BASE}{seq['output_url']}"
     out["canvas"] = [seq.get("width"), seq.get("height")]
-    out["shots"] = [{"shot": i + 1, "file": s.get("first"), **({"clip": s["clip"]} if s.get("clip") else {})}
+    out["shots"] = [{"shot": i + 1, "file": s.get("first"), **({"clip": s["clip"]} if s.get("clip") else {}),
+                     **({"hold": s["hold"]} if s.get("hold") is not None else {})}
                     for i, s in enumerate(seq.get("shots") or [])]
     story = seq.get("story") or ""
+    ids = seq.get("segments") or []
     out["segments"] = [{"segment": i + 1, "from_shot": i + 1, "to_shot": i + 2,
-                        **(_brief(t) if t else {"status": "missing"}),
+                        **(_brief(t) if t else {"cut": True} if i < len(ids) and ids[i] is None else {"status": "missing"}),
                         **({"prompt_extra": t["params"].get("prompt_extra") or "",
                             "older_story": (t["params"].get("story") or "") != story} if t else {})}
                        for i, t in enumerate(seq.get("takes") or [])]
@@ -202,10 +204,12 @@ def _seq_brief(seq: dict[str, Any]) -> dict[str, Any]:
 async def create_sequence(shots: list[str], segments: list[dict[str, Any]], story: str = "") -> dict[str, Any]:
     """Queue one longer video through several shots: shot 1 → shot 2 → … with a transition at each hand-off.
 
-    shots: 2-8 local file paths in order, images or short clips (1-6 s). A clip plays in full at its place; the
-    transition before it lands on its first frame and the one after it leaves from its last frame. segments: one
-    dict per hand-off (len(shots) - 1), each {"preset": id from list_presets, "model"?: id from list_models, "seconds"?: one of its lengths,
-    "seed"?, "prompt_extra"?, "a_desc"?, "b_desc"?}. Every segment is checked before anything renders; each one is
+    shots: 2-8 local file paths in order, images or clips. A clip plays in full at its place; the transition before
+    it lands on its first frame and the one after it leaves from its last frame. A clip next to a transition is 1-6 s;
+    a clip whose hand-offs are both cuts may be 1-60 s. segments: one dict per hand-off (len(shots) - 1), each
+    {"preset": id from list_presets, "model"?: id from list_models, "seconds"?: one of its lengths, "seed"?,
+    "prompt_extra"?, "a_desc"?, "b_desc"?}, or {"preset": "cut"}: no transition, the two shots meet with a hard cut
+    and nothing renders (an image next to a cut shows for 2 s). Only cuts: the video is joined at once. Every segment is checked before anything renders; each one is
     an ordinary job (judge it with preview_job). Every take renders at the first shot's size (the sequence keeps
     that canvas through later edits). story: optional, ≤300 chars, the idea of the whole film (who, where, mood),
     shared context for every transition; per-transition direction goes in each segment's prompt_extra. Follow with
@@ -310,8 +314,8 @@ async def edit_sequence(sequence_id: str, order: list[int], transitions: dict[st
     """Edit a settled sequence like a storyboard, in one step. order: the CURRENT shot numbers (1-based, from
     get_sequence) in their new order — leave a number out to remove that shot, permute to reorder (2-8 shots).
     A transition whose two shots were already adjacent in that direction keeps its take; every other one is new and
-    needs an entry in `transitions`, keyed by its number in the NEW order ("1" = new shot 1 → new shot 2), each
-    {"preset", "seconds"?, "prompt_extra"?, "seed"?}; an entry for a kept transition makes a new take of it. Only new
+    gets an entry in `transitions` (without one it is a cut: nothing renders), keyed by its number in the NEW order ("1" = new shot 1 → new shot 2), each
+    {"preset", "seconds"?, "prompt_extra"?, "seed"?} or {"preset": "cut"}; an entry for a kept transition makes a new take of it. Only new
     transitions render; removing the first or last shot renders nothing and just joins again. story: omit to keep,
     "" to clear; changing it re-renders nothing (takes made before keep theirs: older_story in the result; use
     refine_segment on one to remake it with the new story). The canvas never changes. Pass the updated_at you read
@@ -328,6 +332,15 @@ async def get_sequence(sequence_id: str) -> dict[str, Any]:
     return _seq_brief(await _req("GET", f"/api/sequences/{sequence_id}"))
 
 
+def _segment_progress(segment: str | None, take: dict[str, Any] | None) -> float:
+    """0-1 for one hand-off: a cut (no segment) has nothing to render, so it is done."""
+    if segment is None:
+        return 1.0
+    if not take:
+        return 0.0
+    return 1.0 if take["status"] == "succeeded" else float(take.get("progress") or 0)
+
+
 @server.tool()
 async def wait_sequence(sequence_id: str, ctx: Context, timeout_s: int = 1800) -> dict[str, Any]:
     """Block until every segment has rendered and the video is joined (or one failed, or timeout)."""
@@ -335,8 +348,8 @@ async def wait_sequence(sequence_id: str, ctx: Context, timeout_s: int = 1800) -
     deadline = loop.time() + timeout_s
     while True:
         seq = await _req("GET", f"/api/sequences/{sequence_id}")
-        takes = [t for t in seq.get("takes") or [] if t]
-        done = sum(1.0 if t["status"] == "succeeded" else float(t.get("progress") or 0) for t in takes)
+        takes = seq.get("takes") or [None] * len(seq["segments"])
+        done = sum(_segment_progress(s, t) for s, t in zip(seq["segments"], takes))
         await ctx.report_progress(done, float(len(seq["segments"])))
         if seq["status"] in SEQ_TERMINAL or loop.time() > deadline:
             return _seq_brief(seq)

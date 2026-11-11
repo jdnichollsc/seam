@@ -39,7 +39,9 @@ model runs on your machine and every take can be reopened, inspected and re-run 
 - **360° orbit** (optional, your GPU only): turn a generated shot into a full orbit around its subject, drag to the
   angle you want and use that frame as a first or last shot or in a sequence. It appears once its models are installed.
 - **Sequences**: more than two shots? Put them in order, pick an effect per hand-off, and Seam renders each
-  transition and joins them into one video (clips play in full at their place). A bad hand-off gets a new take on
+  transition and joins them into one video (clips play in full at their place). A hand-off can also be a **Cut**:
+  nothing renders and the shots meet with a hard cut, so your own clips (up to 60 s between cuts) and images (2 s
+  each) can sit in any order; a sequence of only cuts joins at once, free. A bad hand-off gets a new take on
   its own; the others are reused. Or grow a story shot by shot: **Continue** a finished two-shot take with a new
   shot, then keep adding; only the new transition renders, and every transition starts from your own shot, so the
   story stays as consistent as the shots you bring.

@@ -649,3 +649,5 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .models-link { justify-self: start; font-size: 12.5px; }
 .app-toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 50; margin: 0; padding: 10px 16px;
   border-radius: var(--r-ctl); background: var(--ink-raise); border: 1px solid var(--ok); color: var(--ok); }
+.seq-take.is-cut .seq-take-media { display: grid; place-items: center; color: var(--muted); }
+.seq-take.is-cut .seq-take-media .icon { width: 22px; height: 22px; }

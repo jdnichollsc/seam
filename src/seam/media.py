@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -115,7 +116,8 @@ def review_sheet(video: Path, dst: Path, n: int = 8, height: int = 220, middle: 
     return dst
 
 
-CLIP_SECONDS = (1.0, 6.0)  # clip inputs, as Higgsfield's Transitions: short shots around the transition
+CLIP_SECONDS = (1.0, 6.0)  # a clip next to a generated transition, as Higgsfield's Transitions: short shots around it
+LONG_CLIP_SECONDS = (1.0, 60.0)  # a clip whose hand-offs are all cuts: it only plays, nothing is generated from it
 
 
 def normalize_clip(src: Path, dst: Path) -> Path:
@@ -190,7 +192,7 @@ def join(parts: list[Path], dst: Path, width: int, height: int, fps: float) -> P
     return dst
 
 
-def _still(image: Path, dst: Path, seconds: float) -> Path:
+def still(image: Path, dst: Path, seconds: float) -> Path:
     _ensure_ffmpeg()
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-loop", "1", "-t", f"{seconds:.3f}", "-i", str(image), "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
                     "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(dst)],
@@ -206,15 +208,17 @@ def _card(text: str, dst: Path, width: int, height: int) -> Path:
     return dst
 
 
-def rough_cut(shots: list[dict[str, str | None]], labels: list[str], dst: Path, work: Path, width: int, height: int,
+def rough_cut(shots: list[dict[str, Any]], labels: list[str | None], dst: Path, work: Path, width: int, height: int,
               hold: float = 1.5, gap: float = 0.8, fps: float = 24) -> Path:
-    """The order and pacing of a sequence with nothing rendered: each shot held, or its clip in full, and a black card
-    naming the transition that will go there. `work` holds the pieces until the join."""
+    """The order and pacing of a sequence with nothing rendered: each shot held (its own `hold`, else `hold`), or its
+    clip in full, and a black card naming the transition that will go there; a cut (label None) has no card. `work`
+    holds the pieces until the join."""
     parts: list[Path] = []
     for i, shot in enumerate(shots):
-        parts.append(Path(shot["clip"]) if shot.get("clip") else _still(Path(str(shot["first"])), work / f"shot{i}.mp4", hold))
-        if i < len(labels):
-            parts.append(_still(_card(labels[i], work / f"card{i}.png", width, height), work / f"card{i}.mp4", gap))
+        parts.append(Path(shot["clip"]) if shot.get("clip")
+                     else still(Path(str(shot["first"])), work / f"shot{i}.mp4", shot.get("hold") or hold))
+        if i < len(labels) and labels[i] is not None:
+            parts.append(still(_card(labels[i], work / f"card{i}.png", width, height), work / f"card{i}.mp4", gap))
     return join(parts, dst, width, height, fps)
 
 
