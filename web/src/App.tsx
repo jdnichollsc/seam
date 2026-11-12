@@ -30,6 +30,7 @@ import {
 } from './api'
 
 import { registerWebMcp } from './webmcp'
+import { sequence as sequenceRoute, tab, take as takeRoute, useRoute, withTab } from './route'
 
 gsap.registerPlugin(useGSAP)
 
@@ -125,6 +126,7 @@ function useLive() {
     setSeqs((prev) => merge(prev, [seq]))
     setJobs((prev) => merge(prev, (seq.takes ?? []).filter((t): t is Job => !!t)))
   }, [])
+  const hydrateJob = useCallback((job: Job) => setJobs((prev) => merge(prev, [job])), [])
   useEffect(() => {
     const load = () => {
       api.jobs().then((js) => setJobs((prev) => merge(prev, js))).catch(() => {})
@@ -154,35 +156,80 @@ function useLive() {
     })
   }, [])
   // a record in the trash arrives like any update: every open tab drops it, and a restore brings it back
-  return { jobs: jobs.filter((j) => !j.deleted_at), seqs: seqs.filter((q) => !q.deleted_at), hydrate }
+  return { jobs: jobs.filter((j) => !j.deleted_at), seqs: seqs.filter((q) => !q.deleted_at), hydrate, hydrateJob }
 }
 
-/** "Add the next shot", in two steps like an editor's Extend: choose the shot, then check where it leaves from, the
- *  effect into it and the new shot side by side before anything renders. Only the new transition renders. */
-function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEffect, seconds, onMake }: {
+const CUT_ONLY_OVER = 6.05  // a clip longer than this meets its neighbours with a cut (the server's own limit)
+
+/** "Add the next shot", in two steps like an editor's Extend: choose the shot (a new file, a generated image or a
+ *  finished transition), then check where it leaves from, the hand-off into it and the new shot side by side before
+ *  anything renders. Only a new transition renders; a cut renders nothing. */
+function NextShot({ label, fromUrl, fromClip, busy, disabled, blocked, effects, defaultEffect, seconds, takes, given, onGiven, onMake }: {
   label: string
   fromUrl?: string
+  fromClip?: string  // the shot it leaves from, when that is a clip: a long one only takes a cut
   busy: boolean
   disabled?: boolean
   blocked?: string  // why it cannot grow yet; shown instead of the hint
   effects: { id: string; name: string; model?: string }[]
   defaultEffect: string
   seconds: number
-  onMake: (f: File, effect: string, direction: string, model: string) => Promise<boolean>
+  takes: Job[]  // finished transitions that can come in as a clip
+  given?: Upload  // a shot handed over from Generate Shot: it starts chosen
+  onGiven?: () => void
+  onMake: (shot: File | Upload, effect: string, direction: string, model: string) => Promise<boolean>
 }) {
   const input = useRef<HTMLInputElement>(null)
   const [over, setOver] = useState(false)
-  const [file, setFile] = useState<File | null>(null)
-  const [effect, setEffect] = useState(defaultEffect)
+  const [staged, setStaged] = useState<{ file: File } | { up: Upload } | null>(given ? { up: given } : null)
+  const [effect, setEffect] = useState(defaultEffect || CUT)  // no effect used yet: a cut, like any editor
   const [direction, setDirection] = useState('')  // what happens during THIS transition (its own prompt)
   const [modelChoice, setModelChoice] = useState('')
-  const effectModel = effects.find((x) => x.id === effect)?.model
+  const [source, setSource] = useState<'generated' | 'takes' | null>(null)
+  const [images, setImages] = useState<{ shot: string; name: string; url: string; alt: string }[] | null>(null)
+  const [alone, setAlone] = useState(false)  // a transition without the clips it was made from
+  const [taking, setTaking] = useState(false)
+  const [pickError, setPickError] = useState<string | null>(null)
+  const [long, setLong] = useState<Record<string, boolean>>({})  // by video address: longer than a transition allows
+  const measure = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const { currentSrc, duration } = e.currentTarget
+    setLong((prev) => ({ ...prev, [currentSrc]: duration > CUT_ONLY_OVER }))
+  }
+  const isLong = (url?: string) => !!url && !!long[new URL(url, window.location.href).href]
+  const file = staged && 'file' in staged ? staged.file : null
+  const up = staged && 'up' in staged ? staged.up : null
   const preview = useMemo(() => (file ? URL.createObjectURL(file) : ''), [file])
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
+  useEffect(() => { if (given) onGiven?.() }, [])  // eslint-disable-line react-hooks/exhaustive-deps -- taken once, on arrival
+  useEffect(() => {
+    if (source !== 'generated' || images) return
+    api.shots()
+      .then((r) => setImages(r.shots.flatMap((s) => s.images.filter((i) => !i.deleted_at).map((i) => ({ shot: s.id, name: i.name, url: i.url, alt: s.prompt })))))
+      .catch((e) => setPickError((e as Error).message))
+  }, [source, images])
+  const off = !!disabled || busy || taking
+  const fromLong = isLong(fromClip)
+  const cutOnly = (up?.clip_seconds ?? 0) > CUT_ONLY_OVER || (!!file && isLong(preview)) || fromLong
+  const fx = cutOnly ? CUT : effect
+  const effectModel = effects.find((x) => x.id === fx)?.model
   const pick = (f?: File | null) => {
-    if (!f || disabled || busy) return
-    setFile(f)
-    setEffect((e) => (effects.some((x) => x.id === e) ? e : defaultEffect))
+    if (!f || off) return
+    setStaged({ file: f })
+    setSource(null)
+    setEffect((e) => (e === CUT || effects.some((x) => x.id === e) ? e : defaultEffect || CUT))
+  }
+  const take = async (get: () => Promise<Upload>) => {
+    if (off) return
+    setTaking(true)
+    setPickError(null)
+    try {
+      setStaged({ up: await get() })
+      setSource(null)
+    } catch (e) {
+      setPickError((e as Error).message)
+    } finally {
+      setTaking(false)
+    }
   }
   const choose = (
     <input
@@ -210,55 +257,110 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
       pick(e.dataTransfer.files?.[0])
     },
   }
-  if (!file) {
+  if (!staged) {
+    const toggle = (s: 'generated' | 'takes') => { setPickError(null); setSource((now) => (now === s ? null : s)) }
     return (
       <div className={`add-next${over ? ' is-over' : ''}${disabled ? ' is-off' : ''}`} {...drop}>
-        <button className="btn btn-outline btn-sm" disabled={disabled || busy} onClick={() => input.current?.click()}>
+        <button className="btn btn-outline btn-sm" disabled={off} onClick={() => input.current?.click()}>
           <Icon name="plus" /> {label}
         </button>
-        <span className="add-next-note">
-          {blocked ?? `Choose or drop the next image or clip (${CLIP_HINT}). You check the effect into it before anything renders.`}
+        <span className="add-next-from">
+          or from
+          <button className="btn btn-quiet btn-sm" disabled={off} aria-expanded={source === 'generated'} onClick={() => toggle('generated')}>Generated</button>
+          <button className="btn btn-quiet btn-sm" disabled={off} aria-expanded={source === 'takes'} onClick={() => toggle('takes')}>Transitions</button>
         </span>
+        <span className="add-next-note">
+          {blocked ?? `Choose or drop a new image or clip (${CLIP_HINT}). You check the transition into it before anything renders.`}
+        </span>
+        {source === 'generated' && (
+          <div className="pick">
+            {!images ? <span className="add-next-note">{pickError ? '' : 'Loading…'}</span>
+              : !images.length ? <span className="add-next-note">No generated images yet. Make one in Generate Shot.</span>
+              : (
+                <ul className="pick-grid" aria-label="Generated images">
+                  {images.map((i) => (
+                    <li key={`${i.shot}/${i.name}`}>
+                      <button disabled={off} title={i.alt} onClick={() => take(() => api.useShotImage(i.shot, i.name))}>
+                        <img src={i.url} alt={i.alt} loading="lazy" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </div>
+        )}
+        {source === 'takes' && (
+          <div className="pick">
+            {!takes.length ? <span className="add-next-note">No finished transitions yet.</span> : (<>
+              {takes.some((j) => j.merged_url) && (
+                <label className="pick-opt">
+                  <input type="checkbox" checked={alone} onChange={(e) => setAlone(e.target.checked)} />
+                  Transition only, without the clips it was made from
+                </label>
+              )}
+              <ul className="pick-grid" aria-label="Finished transitions">
+                {takes.map((j) => {
+                  const full = !alone && !!j.merged_url
+                  const long = full || (j.extra.duration ?? 0) > CUT_ONLY_OVER
+                  return (
+                    <li key={j.id}>
+                      <button disabled={off} onClick={() => take(() => api.useJob(j.id, !alone))}>
+                        <video src={full ? j.merged_url : j.output_url} poster={j.poster_url} muted playsInline preload="none" />
+                        <span>{full ? 'With its clips' : j.extra.duration ? `${Math.round(j.extra.duration)} s` : 'Transition'}{long ? ' · cut only' : ''}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+              <span className="add-next-note">It comes in as a clip, nothing renders again. Longer than 6 s, it joins with a cut.</span>
+            </>)}
+          </div>
+        )}
+        {pickError && <span className="error" role="alert">{pickError}</span>}
         {choose}
       </div>
     )
   }
-  const isVideo = file.type.startsWith('video/')
+  const isVideo = file ? file.type.startsWith('video/') : !!up?.clip_url
+  const shown = file ? preview : (up?.clip_url ?? up?.url ?? '')
   return (
     <div className={`add-next is-staged${over ? ' is-over' : ''}`} {...drop}>
       <div className="next-chain">
         <figure className="next-end">
           {fromUrl ? <img src={fromUrl} alt="" /> : <span className="next-blank" />}
+          {fromClip && <video className="visually-hidden" src={fromClip} muted preload="metadata" tabIndex={-1} aria-hidden="true" onLoadedMetadata={measure} />}
           <figcaption>Leaves from</figcaption>
         </figure>
         <label className="next-effect">
-          <span>Effect · {seconds} s</span>
-          <select value={effect} onChange={(e) => setEffect(e.target.value)} disabled={busy}>
-            <option value="" disabled>Pick an effect</option>
+          <span>Transition{fx === CUT ? '' : ` · ${seconds} s`}</span>
+          <select value={fx} onChange={(e) => setEffect(e.target.value)} disabled={busy || cutOnly}>
             <option value={CUT}>Cut (no transition)</option>
             {effects.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </select>
         </label>
         <figure className="next-end">
-          {isVideo ? <video src={preview} muted playsInline /> : <img src={preview} alt="" />}
+          {isVideo ? <video src={shown} muted playsInline onLoadedMetadata={measure} /> : <img src={shown} alt="" />}
           <figcaption>New shot</figcaption>
         </figure>
       </div>
-      {effect !== CUT && <ModelSelect value={modelChoice} onChange={setModelChoice} effectModel={effectModel} disabled={busy} />}
-      {effect !== CUT && <label className="next-direction">
+      {fx !== CUT && <ModelSelect value={modelChoice} onChange={setModelChoice} effectModel={effectModel} disabled={busy} />}
+      {fx !== CUT && <label className="next-direction">
         <span>What happens during this transition · optional <Count n={direction.length} max={600} /></span>
         <textarea rows={2} maxLength={600} value={direction} disabled={busy}
           placeholder="She turns toward the camera and smiles, warm evening light"
           onChange={(e) => setDirection(e.target.value)} />
       </label>}
       <div className="next-actions">
-        <button className="btn btn-primary btn-sm" disabled={busy || !effect}
-          onClick={async () => { if (await onMake(file, effect, direction.trim(), modelChoice)) { setFile(null); setDirection('') } }}>
-          {busy ? 'Adding…' : effect === CUT ? 'Add it with a cut' : 'Make this transition'}
+        <button className="btn btn-primary btn-sm" disabled={busy}
+          onClick={async () => { if (await onMake(file ?? up!, fx, direction.trim(), modelChoice)) { setStaged(null); setDirection('') } }}>
+          {busy ? 'Adding…' : fx === CUT ? 'Add it with a cut' : 'Make this transition'}
         </button>
-        <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => input.current?.click()}>Change shot</button>
-        <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => setFile(null)}>Cancel</button>
-        <span className="add-next-note">{effect === CUT ? 'Nothing renders: the video joins again.' : 'Only this transition renders; the takes before it are reused.'}</span>
+        <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => setStaged(null)}>Change shot</button>
+        <span className="add-next-note">
+          {fromLong ? 'The shot before it is a clip longer than 6 s: they join with a cut. Nothing renders.'
+            : cutOnly ? 'This clip is longer than 6 s: it joins with a cut. Nothing renders.'
+            : fx === CUT ? 'Nothing renders: the video joins again.' : 'Only this transition renders; the takes before it are reused.'}
+        </span>
       </div>
       {choose}
     </div>
@@ -1402,19 +1504,26 @@ export default function App() {
   const [modelPick, setModelPick] = useState('')  // '': the effect's own model
   const [models, setModels] = useState<ModelRow[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [focusId, setFocusId] = useState<string | null>(null)
+  const { route, go } = useRoute()
+  const { mode, seqId: focusSeqId, takeId: focusId } = route
+  const [lastSeqId, setLastSeqId] = useState<string | null>(null)  // Generate Shot can add to the sequence that was open
+  const [given, setGiven] = useState<{ seq: string; up: Upload } | null>(null)  // a generated shot on its way to it
   const [showFull, setShowFull] = useState(true)
   const [notes, setNotes] = useState<{ a: Note | null; b: Note | null }>({ a: null, b: null })
-  const { jobs, seqs, hydrate } = useLive()
+  const { jobs, seqs, hydrate, hydrateJob } = useLive()
   const [growing, setGrowing] = useState(false)
   const growLock = useRef(false)  // state updates lag a fast second drop; this does not
   const [story, setStory] = useState('')  // sequence mode: the idea of the whole film
   const [editingTake, setEditingTake] = useState<number | null>(null)  // the transition whose New take is open
   const [seqEditing, setSeqEditing] = useState(false)
   const seqEditLock = useRef(false)
-  const [mode, setMode] = useState<'pair' | 'seq' | 'gen'>('pair')
   const studio = useShotStudio(mode === 'gen', health?.backend)
   const useGenerated = (target: ShotTarget, up: Upload) => {
+    if (target === 'open') {
+      if (!openTarget) return
+      setGiven({ seq: openTarget.id, up })
+      return go(sequenceRoute(openTarget.id))
+    }
     if (target === 'first') {
       setA(up)
       read('a', up.id)
@@ -1424,14 +1533,14 @@ export default function App() {
       read('b', up.id)
     }
     if (target === 'seq') setShots((prev) => (prev.length >= SEQ_MAX ? prev : [...prev, up]))
-    setMode(target === 'seq' ? 'seq' : 'pair')
+    go(tab(target === 'seq' ? 'seq' : 'pair'))
   }
   const modeTabs = (
     <div className="mode">
       <div className="seg seg-sm" role="tablist" aria-label="What to make">
-        <button role="tab" aria-selected={mode === 'pair'} onClick={() => setMode('pair')}>Transition</button>
-        <button role="tab" aria-selected={mode === 'seq'} onClick={() => setMode('seq')}>Sequence</button>
-        <button role="tab" aria-selected={mode === 'gen'} onClick={() => setMode('gen')}>Generate Shot</button>
+        <button role="tab" aria-selected={mode === 'pair'} onClick={() => go(withTab(route, 'pair'))}>Transition</button>
+        <button role="tab" aria-selected={mode === 'seq'} onClick={() => go(withTab(route, 'seq'))}>Sequence</button>
+        <button role="tab" aria-selected={mode === 'gen'} onClick={() => go(withTab(route, 'gen'))}>Generate Shot</button>
       </div>
     </div>
   )
@@ -1442,7 +1551,6 @@ export default function App() {
   const [roughBusy, setRoughBusy] = useState(false)
   const [sel, setSel] = useState(0)
   const [seqBusy, setSeqBusy] = useState(0)  // shots still uploading
-  const [focusSeqId, setFocusSeqId] = useState<string | null>(null)
   const [estimate, setEstimate] = useState<number | null>(null)
   const [examples, setExamples] = useState<Example[]>([])
   const [model, setModel] = useState<{ file: File; side: 'a' | 'b' | 'seq' } | null>(null)
@@ -1488,6 +1596,35 @@ export default function App() {
   const current = presets.find((p) => p.id === preset)
   const focus = jobs.find((j) => j.id === focusId) ?? null
   const fseq = seqs.find((q) => q.id === focusSeqId) ?? null
+  const openTarget = seqs.find((q) => q.id === lastSeqId && q.status === 'succeeded' && q.shots.length < SEQ_MAX)
+  const asked = useRef(new Set<string>())
+  const seen = useRef(new Set<string>())  // ids that have been on screen: one that goes was trashed here
+  useEffect(() => {
+    if (focusSeqId) setLastSeqId(focusSeqId)
+    const id = focusSeqId ?? focusId
+    if (!id) return
+    if (focusSeqId ? fseq : focus) {
+      seen.current.add(id)
+      asked.current.delete(id)  // if it leaves the lists, ask again: trashed, or only out of their window
+      return
+    }
+    if (asked.current.has(id)) return
+    asked.current.add(id)
+    const here = window.location.pathname
+    const what = focusSeqId ? 'sequence' : 'take'
+    const miss = (e?: Error) => {
+      asked.current.delete(id)  // a later visit (Back to this address) asks again
+      if (window.location.pathname !== here) return  // the user has moved on
+      if (e && !/not found/i.test(e.message)) return setError(`Could not open that ${what}: ${e.message}`)
+      if (!seen.current.has(id)) setError(`That ${what} is no longer here.`)  // their own trash needs no error
+      go(tab(mode), true)
+    }
+    if (focusSeqId) api.sequence(id).then((q) => (q.deleted_at ? miss() : hydrate(q))).catch(miss)
+    else api.job(id).then((j) => (j.deleted_at ? miss() : hydrateJob(j))).catch(miss)
+  }, [focusSeqId, focusId, fseq, focus, mode, go, hydrate, hydrateJob])
+  useEffect(() => {
+    document.title = `${focusSeqId ? 'Sequence · ' : focusId ? 'Take · ' : mode === 'seq' ? 'New sequence · ' : mode === 'gen' ? 'Generate Shot · ' : ''}Seam`
+  }, [mode, focusSeqId, focusId])
   const fseqTakes = fseq ? fseq.segments.map((id) => newer(jobs.find((j) => j.id === id), fseq.takes?.find((t) => t?.id === id))) : []
   const fseqActive = !!fseq && SEQ_ACTIVE.has(fseq.status)
   const fseqDone = fseq?.status === 'succeeded' && !!fseq.output_url
@@ -1701,8 +1838,7 @@ export default function App() {
           }
         }),
       })
-      setFocusId(null)
-      setFocusSeqId(seq.id)
+      go(sequenceRoute(seq.id, mode))
       if (window.matchMedia('(max-width: 960px)').matches) document.querySelector('.output')?.scrollIntoView({ behavior: 'smooth' })
     } catch (e) {
       setError((e as Error).message)
@@ -1757,13 +1893,13 @@ export default function App() {
   }
 
   /** The next shot after a finished take (it becomes a sequence) or a finished sequence: only the new transition renders. */
-  const grow = async (from: { job: Job } | { seq: Sequence }, file: File, effect: string, direction: string, pick = ''): Promise<boolean> => {
+  const grow = async (from: { job: Job } | { seq: Sequence }, shot: File | Upload, effect: string, direction: string, pick = ''): Promise<boolean> => {
     if (growLock.current) return false
     growLock.current = true
     setError(null)
     setGrowing(true)
     try {
-      const up = await api.upload(file, 'mid')
+      const up = shot instanceof File ? await api.upload(shot, 'mid') : shot
       const pool = effects.filter((p) => allowedLengths(p, pick, models).includes(seconds))
       const source = pool.length ? pool : presets  // none at this length on this model: the length moves below
       const chosen = effect === SURPRISE ? (source[Math.floor(Math.random() * source.length)]?.id ?? '') : effect
@@ -1780,8 +1916,7 @@ export default function App() {
       }
       const seq = 'job' in from ? await api.continueTake(from.job.id, body) : await api.extendSequence(from.seq.id, body)
       hydrate(seq)
-      setFocusId(null)
-      setFocusSeqId(seq.id)
+      go(sequenceRoute(seq.id, mode))
       return true
     } catch (e) {
       const msg = (e as Error).message
@@ -1803,9 +1938,9 @@ export default function App() {
   const nextDefault = (last?: string) =>
     [preset, last ?? ''].find((id) => !!id && nextEffects.some((x) => x.id === id)) ?? ''
 
+  const usable = useMemo(() => jobs.filter((j) => j.status === 'succeeded' && !!j.output_url).slice(0, 24), [jobs])  // finished takes a sequence can take as a clip
   const openSeq = (seq: Sequence) => {
-    setFocusId(null)
-    setFocusSeqId(seq.id)
+    go(sequenceRoute(seq.id, mode))
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1833,8 +1968,7 @@ export default function App() {
         ...shotFields('a', notes.a),
         ...shotFields('b', notes.b),
       })
-      setFocusSeqId(null)
-      setFocusId(job.id)
+      go(takeRoute(job.id, mode))
       // Stacked layout: the output sits below the controls, so bring it into view.
       if (window.matchMedia('(max-width: 960px)').matches) document.querySelector('.output')?.scrollIntoView({ behavior: 'smooth' })
     } catch (e) {
@@ -1846,8 +1980,7 @@ export default function App() {
     setError(null)
     try {
       const next = await api.refine(job.id, changes)
-      setFocusSeqId(null)
-      setFocusId(next.id)
+      go(takeRoute(next.id, mode))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -1860,7 +1993,7 @@ export default function App() {
       setA(got.a)
       setB(got.b)
       if (presets.some((p) => p.id === got.preset)) setPreset(got.preset)
-      setFocusId(null)
+      go(tab('pair'))
       read('a', got.a.id)
       read('b', got.b.id)
     } catch (e) {
@@ -1883,9 +2016,7 @@ export default function App() {
         setNotes((prev) => ({ ...prev, [side]: { upload, desc, ref, state: 'ready', edited: false } }))
       } else read(side, upload)
     }
-    setMode('pair')
-    setFocusSeqId(null)
-    setFocusId(job.id)
+    go(takeRoute(job.id, 'pair'))
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -1898,7 +2029,7 @@ export default function App() {
     if (o.sequence_id) {
       api.refineSegment(o.sequence_id, o.part ?? 1, o.body).then(hydrate).catch((e) => setError(`Could not start that take: ${(e as Error).message}`))
     } else if (o.job_id) {
-      api.refine(o.job_id, o.body).then((next) => { setFocusSeqId(null); setFocusId(next.id) })
+      api.refine(o.job_id, o.body).then((next) => go(takeRoute(next.id, mode)))
         .catch((e) => setError(`Could not start that take: ${(e as Error).message}`))
     }
   }
@@ -2166,7 +2297,7 @@ export default function App() {
         </aside>
 
         <main className="canvas">
-          {mode === 'gen' ? <ShotCollection studio={studio} onUse={useGenerated} /> : (<>
+          {mode === 'gen' ? <ShotCollection studio={studio} openSeq={!!openTarget} onUse={useGenerated} /> : (<>
           {fseq ? (
           <Node
             title="Output"
@@ -2177,7 +2308,7 @@ export default function App() {
             meta={
               <>
                 {seqStatusText(fseq, fseqTakes)}
-                <button className="btn-icon btn-xs" onClick={() => setFocusSeqId(null)} title="Close this sequence" aria-label="Close this sequence">
+                <button className="btn-icon btn-xs" onClick={() => go(tab(mode))} title="Close this sequence" aria-label="Close this sequence">
                   <Icon name="close" />
                 </button>
               </>
@@ -2253,7 +2384,7 @@ export default function App() {
                   </span>
                   <span className="seq-take-actions">
                     {t?.status === 'succeeded' && (
-                      <button className="btn btn-quiet btn-sm" onClick={() => { setFocusSeqId(null); setFocusId(t.id) }}>Watch</button>
+                      <button className="btn btn-quiet btn-sm" onClick={() => go(takeRoute(t.id, mode))}>Watch</button>
                     )}
                     <button className="btn btn-quiet btn-sm" disabled={fseqActive || !t} aria-expanded={editingTake === i}
                       title={fseqActive ? 'Wait until the sequence settles' : 'A new take of this transition: keep or change its effect and direction'}
@@ -2279,6 +2410,10 @@ export default function App() {
                 effects={nextEffects}
                 defaultEffect={nextDefault(fseqTakes[fseqTakes.length - 1]?.params.preset)}
                 seconds={seconds}
+                takes={usable}
+                fromClip={fseq.shots[fseq.shots.length - 1]?.clip_url}
+                given={given?.seq === fseq.id ? given.up : undefined}
+                onGiven={() => setGiven(null)}
                 onMake={(f, fx, dir, m) => grow({ seq: fseq }, f, fx, dir, m)}
               />
             )}
@@ -2312,7 +2447,7 @@ export default function App() {
               <>
                 {focus ? statusText(focus) : a && b ? 'Ready to make' : 'Waiting for shots'}
                 {focus && (
-                  <button className="btn-icon btn-xs" onClick={() => setFocusId(null)} title="Close this take" aria-label="Close this take">
+                  <button className="btn-icon btn-xs" onClick={() => go(tab(mode))} title="Close this take" aria-label="Close this take">
                     <Icon name="close" />
                   </button>
                 )}
@@ -2405,7 +2540,7 @@ export default function App() {
 
           {!fseq && focusDone && focus && !focus.extra.sequence_id && (
             <NextShot key={focus.id} label="Continue with a new shot" fromUrl={uploadUrl(focus.params.image_b)} busy={growing}
-              effects={nextEffects} defaultEffect={nextDefault(focus.params.preset)} seconds={seconds}
+              effects={nextEffects} defaultEffect={nextDefault(focus.params.preset)} seconds={seconds} takes={usable.filter((j) => j.id !== focus.id)}
               onMake={(f, fx, dir, m) => grow({ job: focus }, f, fx, dir, m)} />
           )}
 

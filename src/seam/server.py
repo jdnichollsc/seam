@@ -466,19 +466,24 @@ async def _upload_clip(file: UploadFile, role: str) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / f"clip{Path(file.filename or 'x.mp4').suffix or '.mp4'}"
         src.write_bytes(data)
-        try:
-            # a clip in a sequence may sit between cuts (long); next to a transition the sequence checks 1-6 s
-            limits = media.LONG_CLIP_SECONDS if role == "mid" else media.CLIP_SECONDS
-            clip, seconds = await asyncio.to_thread(store_clip, settings, src, limits)
-            ends = {}
-            for end in (("first", "last") if role == "mid" else ("last",) if role == "a" else ("first",)):
-                frame = await asyncio.to_thread(media.clip_frame, clip, Path(tmp) / f"{end}.png", end == "last")
-                ends[end] = store_upload(settings, frame)
-            stored = ends.get("last") or ends["first"]  # a: the frame the transition leaves from; b: lands on
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
+        return await _clip_out(src, role, Path(tmp))
+
+
+async def _clip_out(src: Path, role: str, tmp: Path) -> dict[str, Any]:
+    """A video file as a stored clip upload, with the end frames its role needs."""
+    try:
+        # a clip in a sequence may sit between cuts (long); next to a transition the sequence checks 1-6 s
+        limits = media.LONG_CLIP_SECONDS if role == "mid" else media.CLIP_SECONDS
+        clip, seconds = await asyncio.to_thread(store_clip, settings, src, limits)
+        ends = {}
+        for end in (("first", "last") if role == "mid" else ("last",) if role == "a" else ("first",)):
+            frame = await asyncio.to_thread(media.clip_frame, clip, tmp / f"{end}.png", end == "last")
+            ends[end] = store_upload(settings, frame)
+        stored = ends.get("last") or ends["first"]  # a: the frame the transition leaves from; b: lands on
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
     w, h = media.image_size(stored)
     out = {"id": stored.name, "url": f"/uploads/{stored.name}", "width": w, "height": h,
            "clip": clip.name, "clip_url": f"/uploads/{clip.name}", "clip_seconds": round(seconds, 2)}
@@ -521,6 +526,22 @@ def describe_shot(upload_id: str) -> dict[str, Any]:
 @app.get("/api/jobs")
 def list_jobs(limit: int = 50) -> list[dict[str, Any]]:
     return [_job_out(j) for j in _engine().store.list(limit=min(limit, 200))]
+
+
+@app.post("/api/jobs/{job_id}/use")
+async def use_job(job_id: str, full: bool = True) -> dict[str, Any]:
+    """A finished take's video as an ordinary clip upload (a copy), so it can be a shot of a sequence. Nothing is
+    generated. `full`: the version with its clips when the take has one; false: the transition alone."""
+    job = _engine().store.get(job_id)
+    if job is None or job.deleted_at:
+        raise HTTPException(404, "job not found")
+    if job.status != "succeeded" or not job.output:
+        raise HTTPException(409, "that take has not finished")
+    src = settings.outputs_dir / Path((full and job.extra.get("merged")) or job.output).name
+    if not src.is_file():
+        raise HTTPException(404, "that take's video is no longer on disk")
+    with tempfile.TemporaryDirectory() as tmp:
+        return await _clip_out(src, "mid", Path(tmp))
 
 
 @app.get("/api/jobs/{job_id}")
@@ -978,9 +999,23 @@ if _previews.exists():
     app.mount("/previews", StaticFiles(directory=_previews), name="previews")
 if EXAMPLES_DIR.exists():
     app.mount("/examples", StaticFiles(directory=EXAMPLES_DIR), name="examples")
+WEB_PAGES = ("/sequence", "/generate", "/sequences/{item_id}", "/takes/{item_id}")
+
+
+def mount_web(target: FastAPI, web: Path) -> None:
+    """Serve the built web app at `/`, and its page at each of its own paths, so a reload or a pasted link opens
+    the same place. Only these paths: anything else keeps the static mount's 404."""
+    def page() -> FileResponse:
+        return FileResponse(web / "index.html", headers={"Cache-Control": "no-cache"})
+
+    for path in WEB_PAGES:
+        target.add_api_route(path, page, methods=["GET"], include_in_schema=False)
+    target.mount("/", StaticFiles(directory=web, html=True), name="web")
+
+
 _web = PACKAGE_DIR / "static" / "web"
 if _web.exists():
-    app.mount("/", StaticFiles(directory=_web, html=True), name="web")
+    mount_web(app, _web)
 else:
     @app.get("/")
     def index() -> dict[str, str]:

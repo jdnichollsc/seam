@@ -12,7 +12,7 @@ const QUALITIES = [
 ]
 const COUNTS = [1, 2, 3, 4]
 type View = 'all' | 'starred' | 'trash'
-export type ShotTarget = 'first' | 'last' | 'seq'
+export type ShotTarget = 'first' | 'last' | 'seq' | 'open'  // open: the sequence the user had open
 export type ShotStudio = ReturnType<typeof useShotStudio>
 
 export function useShotStudio(active: boolean, backend?: string) {
@@ -180,7 +180,7 @@ function OrbitScrubber({ orbit, alt, frame, setFrame }: { orbit: Orbit; alt: str
 }
 
 /** The orbit, large: turn it, then use the frame you see as a first or last shot or in a sequence. */
-function OrbitDialog({ orbit, alt, onUse, onClose }: { orbit: Orbit; alt: string; onUse: (t: ShotTarget, frame: number) => void; onClose: () => void }) {
+function OrbitDialog({ orbit, alt, openSeq, onUse, onClose }: { orbit: Orbit; alt: string; openSeq?: boolean; onUse: (t: ShotTarget, frame: number) => void; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const [frame, setFrame] = useState(0)
   useEffect(() => {
@@ -201,14 +201,15 @@ function OrbitDialog({ orbit, alt, onUse, onClose }: { orbit: Orbit; alt: string
           <span>Use {angle}° as</span>
           <button className="btn btn-quiet" onClick={() => onUse('first', frame)}>First</button>
           <button className="btn btn-quiet" onClick={() => onUse('last', frame)}>Last</button>
-          <button className="btn btn-quiet" onClick={() => onUse('seq', frame)}>Sequence</button>
+          <button className="btn btn-quiet" onClick={() => onUse('seq', frame)}>{openSeq ? 'New sequence' : 'Sequence'}</button>
+          {openSeq && <button className="btn btn-quiet" title="Add it to the sequence you had open" onClick={() => onUse('open', frame)}>Open sequence</button>}
         </div>
       </footer>
     </dialog>
   )
 }
 
-function ImageCard({ studio, shot, image, onUse }: { studio: ShotStudio; shot: GeneratedShot; image: ShotImage; onUse: (t: ShotTarget, u: Upload) => void }) {
+function ImageCard({ studio, shot, image, openSeq, onUse }: { studio: ShotStudio; shot: GeneratedShot; image: ShotImage; openSeq?: boolean; onUse: (t: ShotTarget, u: Upload) => void }) {
   const s = studio
   const [copied, setCopied] = useState(false)
   const [open, setOpen] = useState(false)
@@ -235,7 +236,7 @@ function ImageCard({ studio, shot, image, onUse }: { studio: ShotStudio; shot: G
         )}
       </div>
       {open && orbit && (
-        <OrbitDialog orbit={orbit} alt={shot.prompt} onClose={() => setOpen(false)}
+        <OrbitDialog orbit={orbit} alt={shot.prompt} openSeq={openSeq} onClose={() => setOpen(false)}
           onUse={(t, frame) => { setOpen(false); use(t, frame) }} />
       )}
       <div className="card-body">
@@ -257,7 +258,8 @@ function ImageCard({ studio, shot, image, onUse }: { studio: ShotStudio; shot: G
               <span>Use as</span>
               <button className="btn btn-quiet" onClick={() => use('first')}>First</button>
               <button className="btn btn-quiet" onClick={() => use('last')}>Last</button>
-              <button className="btn btn-quiet" onClick={() => use('seq')}>Sequence</button>
+              <button className="btn btn-quiet" onClick={() => use('seq')}>{openSeq ? 'New sequence' : 'Sequence'}</button>
+              {openSeq && <button className="btn btn-quiet" title="Add it to the sequence you had open" onClick={() => use('open')}>Open sequence</button>}
             </div>
             <div className="card-actions">
               <button className="btn-icon" title="Use this prompt and its settings" aria-label="Use this prompt" onClick={() => s.reusePrompt(shot)}><Icon name="pencil" /></button>
@@ -282,7 +284,7 @@ function ImageCard({ studio, shot, image, onUse }: { studio: ShotStudio; shot: G
   )
 }
 
-export function ShotCollection({ studio, onUse }: { studio: ShotStudio; onUse: (t: ShotTarget, u: Upload) => void }) {
+export function ShotCollection({ studio, openSeq, onUse }: { studio: ShotStudio; openSeq?: boolean; onUse: (t: ShotTarget, u: Upload) => void }) {
   const s = studio
   const [view, setView] = useState<View>('all')
   const [search, setSearch] = useState('')
@@ -327,7 +329,7 @@ export function ShotCollection({ studio, onUse }: { studio: ShotStudio; onUse: (
             </div>
           </li>
         ))}
-        {cards.map(({ shot, image }) => <ImageCard key={image.name} studio={s} shot={shot} image={image} onUse={onUse} />)}
+        {cards.map(({ shot, image }) => <ImageCard key={image.name} studio={s} shot={shot} image={image} openSeq={openSeq} onUse={onUse} />)}
       </ol>
     </section>
   )
