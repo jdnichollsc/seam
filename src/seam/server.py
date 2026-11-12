@@ -314,6 +314,8 @@ def list_models(refresh: bool = False) -> dict[str, Any]:
 def _downloads() -> Downloads:
     if downloads is None:
         raise HTTPException(503, "engine not started")
+    if downloads.root is None and _is_loopback(settings.host):  # SEAM_MODELS_DIR is not set: ask the local ComfyUI
+        downloads.root = model_status.comfy_models_dir()
     return downloads
 
 
@@ -323,8 +325,10 @@ def _download_blocker() -> str | None:
         return "Downloads are only available when Seam runs on localhost"
     if backends.current(settings)[0] != backends.LOCAL:
         return "Seam renders on Comfy Cloud: its models are provided there, nothing to download"
-    if not settings.models_dir or not settings.models_dir.is_dir():
-        return "Set SEAM_MODELS_DIR to your ComfyUI models folder and restart Seam, or use the command"
+    root = _downloads().root
+    if not root or not root.is_dir():
+        return ("Start your local ComfyUI so Seam can find its models folder (or set SEAM_MODELS_DIR and restart "
+                "Seam), or use the command")
     return None
 
 
@@ -337,7 +341,8 @@ def list_downloads() -> dict[str, Any]:
     """Every model per feature, ready or not on your GPU and on Comfy Cloud, and the sets Seam can fetch."""
     e = _engine()
     local = model_status.object_info(settings, backends.LOCAL)
-    cloud = model_status.object_info(settings, backends.CLOUD) if backends.cloud_key(settings)[0] else None
+    # Comfy Cloud's node list is about 10 MB: the panel opens without it and asks again while it is read
+    cloud, checking = model_status.info_or_warm(settings, backends.CLOUD) if backends.cloud_key(settings)[0] else (None, False)
     features = [("transitions", e.catalog()), ("shots", load_image_models(settings.workflows_dir)),
                 ("orbit", {"orbit": load_spec(settings.workflows_dir, "orbit")})]
     models = []
@@ -346,7 +351,8 @@ def list_downloads() -> dict[str, Any]:
             ls, lr = model_status.state(spec, backends.LOCAL, local)
             cs, cr = model_status.state(spec, backends.CLOUD, cloud)
             if cloud is None and backends.CLOUD in spec.backends:
-                cs, cr = "not_checked", "add a Comfy Cloud key to check"
+                cs, cr = "not_checked", "checking Comfy Cloud…" if checking else "add a Comfy Cloud key to check" \
+                    if not backends.cloud_key(settings)[0] else "Comfy Cloud did not answer"
             ms = set_for(spec.model)
             models.append({"id": spec.model, "label": spec.label, "kind": spec.kind, "feature": feature,
                            "set": ms.id if ms else None, "local": {"state": ls, "reason": lr},
@@ -359,8 +365,8 @@ def list_downloads() -> dict[str, Any]:
             cloud_states = {m["cloud"]["state"] for m in models if m["set"] == row["id"]}
             if cloud_states and cloud_states <= {"not_offered"}:
                 row["blocker"] = "Not offered on Comfy Cloud: switch to Your GPU to download it"
-    return {"backend": backends.current(settings)[0], "blocker": blocker, "free": d.free(),
-            "models": models, "sets": sets}
+    return {"backend": backends.current(settings)[0], "blocker": blocker, "free": d.free(), "checking": checking,
+            "models_dir": str(d.root) if d.root else None, "models": models, "sets": sets}
 
 
 @app.post("/api/downloads/{set_id}", status_code=202)

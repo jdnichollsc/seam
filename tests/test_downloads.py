@@ -245,6 +245,67 @@ def test_server_refuses_without_acceptance_on_cloud_and_off_loopback(seam, monke
     assert client.post("/api/downloads/orbit/cancel").status_code == 403
 
 
+def test_models_folder_comes_from_the_local_comfyui_when_not_set(seam, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, s = seam
+    monkeypatch.setattr(server, "downloads", Downloads(None, s.data_dir, lambda *_a: None))
+    monkeypatch.setattr(server.model_status, "comfy_models_dir", lambda: None)
+    body = client.get("/api/downloads").json()
+    assert "Start your local ComfyUI" in body["blocker"] and body["models_dir"] is None
+    assert client.post("/api/downloads/orbit", json={"accept": True}).status_code == 409
+    monkeypatch.setattr(server.model_status, "comfy_models_dir", lambda: s.models_dir)
+    body = client.get("/api/downloads").json()
+    assert body["blocker"] is None and body["models_dir"] == str(s.models_dir) and body["free"]
+
+
+def test_comfyui_models_folder_is_read_from_its_folder_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import json as _json
+
+    from seam import models
+
+    root = tmp_path / "ComfyUI" / "models"
+    (root / "checkpoints").mkdir(parents=True)
+    asked = []
+
+    def urlopen(url, timeout=0):
+        asked.append(url)
+        return io.BytesIO(_json.dumps({"checkpoints": [str(root / "checkpoints"), str(tmp_path / "output" / "checkpoints")]}).encode())
+
+    monkeypatch.setattr(models.urllib.request, "urlopen", urlopen)
+    monkeypatch.delenv("SEAM_COMFYUI_URL", raising=False)
+    assert models.comfy_models_dir() == root and asked == ["http://127.0.0.1:8188/internal/folder_paths"]
+    monkeypatch.setenv("SEAM_COMFYUI_URL", "http://192.168.1.20:8188")  # another machine: its path is not ours
+    assert models.comfy_models_dir() is None and len(asked) == 1
+
+
+def test_the_panel_does_not_wait_for_comfy_cloud(seam, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    from seam import models
+
+    client, _s = seam
+    release, started = threading.Event(), threading.Event()
+
+    def slow(_settings, backend):
+        started.set()
+        release.wait(10)
+        return {}
+
+    monkeypatch.setattr(backends, "cloud_key", lambda _s: ("k", "test"))
+    monkeypatch.setattr(models, "_fetch", slow)
+    monkeypatch.setattr(models, "_cache", {})
+    body = client.get("/api/downloads").json()  # returns while Comfy Cloud is still being read
+    assert body["checking"] is True and started.wait(5)
+    l25 = next(m for m in body["models"] if m["cloud"]["state"] == "not_checked")
+    assert "checking" in l25["cloud"]["reason"]
+    release.set()
+    for _ in range(100):
+        if not models._warming:
+            break
+        threading.Event().wait(0.05)
+    assert client.get("/api/downloads").json()["checking"] is False
+
+
 def _info(graph: dict, with_files: bool) -> dict:
     """A fake /object_info: every node class of the graph, its model inputs listing the graph's files or nothing."""
     info: dict = {}

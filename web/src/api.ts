@@ -86,6 +86,8 @@ export type DownloadSet = {
 }
 export type DownloadsState = {
   backend: BackendName; blocker: string | null; free: number | null; sets: DownloadSet[]
+  checking?: boolean  // Comfy Cloud's list is still being read: ask again
+  models_dir?: string | null  // where a download lands
   models: { id: string; label: string; kind: string; feature: string; set: string | null; local: ModelAvailability; cloud: ModelAvailability }[]
 }
 export type ShotIn = { image: string } | { clip: string; first: string; last: string }

@@ -7,7 +7,9 @@ import os
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import backend as backends
 from .config import Settings
@@ -16,6 +18,7 @@ from .workflows import WorkflowSpec
 
 CACHE_S = 300.0
 _cache: dict[tuple[str, str | None], tuple[float, dict[str, Any] | None]] = {}
+_warming: set[tuple[str, str | None]] = set()
 _lock = threading.Lock()
 
 
@@ -47,10 +50,55 @@ def object_info(settings: Settings, backend: str, refresh: bool = False) -> dict
         hit = _cache.get(key)
     if hit and not refresh and time.monotonic() - hit[0] < CACHE_S:
         return hit[1]
+    return _read(settings, backend)
+
+
+def _read(settings: Settings, backend: str) -> dict[str, Any] | None:
     info = _fetch(settings, backend)
     with _lock:
-        _cache[key] = (time.monotonic(), info)
+        _cache[_cache_key(settings, backend)] = (time.monotonic(), info)
     return info
+
+
+def info_or_warm(settings: Settings, backend: str) -> tuple[dict[str, Any] | None, bool]:
+    """(node list, still being read). Never waits: Comfy Cloud's list can take a minute, so an unknown one is read
+    on a thread and the caller asks again."""
+    key = _cache_key(settings, backend)
+
+    def warm() -> None:
+        try:
+            _read(settings, backend)
+        finally:
+            with _lock:
+                _warming.discard(key)
+
+    with _lock:
+        hit = _cache.get(key)
+        if hit and time.monotonic() - hit[0] < CACHE_S:
+            return hit[1], False
+        if key not in _warming:
+            _warming.add(key)
+            threading.Thread(target=warm, daemon=True).start()
+    return None, True
+
+
+def comfy_models_dir() -> Path | None:
+    """The local ComfyUI's own `models` folder, asked from it: None when it is not running on this machine or does
+    not say. Read-only; `SEAM_MODELS_DIR` wins over it."""
+    url = os.environ.get("SEAM_COMFYUI_URL", "http://127.0.0.1:8188")
+    if (urlsplit(url).hostname or "").lower() not in ("127.0.0.1", "localhost", "::1"):
+        return None  # another machine's path means nothing here
+    try:
+        with urllib.request.urlopen(f"{url}/internal/folder_paths", timeout=3) as r:
+            folders = json.load(r)
+        for name in ("checkpoints", "diffusion_models", "loras", "vae"):
+            for p in folders.get(name) or []:
+                root = Path(p).parent
+                if root.name == "models" and root.is_dir():
+                    return root
+    except Exception:  # noqa: BLE001 — not running, or an older ComfyUI: the panel then asks for SEAM_MODELS_DIR
+        pass
+    return None
 
 
 def why_not(spec: WorkflowSpec, backend: str, info: dict[str, Any] | None) -> tuple[bool | None, str]:
