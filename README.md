@@ -44,7 +44,10 @@ model runs on your machine and every take can be reopened, inspected and re-run 
   each) can sit in any order; a sequence of only cuts joins at once, free. A bad hand-off gets a new take on
   its own; the others are reused. Or grow a story shot by shot: **Continue** a finished two-shot take with a new
   shot, then keep adding; only the new transition renders, and every transition starts from your own shot, so the
-  story stays as consistent as the shots you bring.
+  story stays as consistent as the shots you bring. The next shot can be a new file, an image from **Generate
+  Shot**, or a **transition you already made**, which comes in as a clip without rendering again.
+- **Links that keep your place**: the open sequence or take is in the address (`/sequences/<id>`, `/takes/<id>`),
+  so a reload, Back/Forward and a pasted link land where you were.
 - **Ask the helper**: a chat on the local Gemma-4 E2B explains the app, knows what you have open, and prepares a new take you start with a click. It never renders or deletes by itself. It reads concrete requests best, like *transition 2 to Smoke at 10 seconds*; free phrasing often gets a question or a description instead. It runs on your GPU only.
 - **Generate shots**: a prompt, an aspect, a quality, a model, up to 4 images, on your GPU or Comfy Cloud. They stay in a collection like Midjourney's: every image shows its prompt and settings, and any of them can be reused, varied, or dropped into a transition or a sequence.
 - **Rough cut**: see a sequence's order and pacing in seconds, before spending any GPU time or credits. Shots, clips and a card naming each transition; nothing renders.

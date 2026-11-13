@@ -86,6 +86,8 @@ export type DownloadSet = {
 }
 export type DownloadsState = {
   backend: BackendName; blocker: string | null; free: number | null; sets: DownloadSet[]
+  checking?: boolean  // Comfy Cloud's list is still being read: ask again
+  models_dir?: string | null  // where a download lands
   models: { id: string; label: string; kind: string; feature: string; set: string | null; local: ModelAvailability; cloud: ModelAvailability }[]
 }
 export type ShotIn = { image: string } | { clip: string; first: string; last: string }
@@ -206,6 +208,10 @@ export const api = {
     call<DownloadSet>(`/api/downloads/${set}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accept: true }) }),
   cancelDownload: (set: string) => call<{ ok: boolean }>(`/api/downloads/${set}/cancel`, { method: 'POST' }),
   jobs: () => call<Job[]>('/api/jobs?limit=60'),
+  /** One take by id: the list above only carries the newest ones. */
+  job: (id: string) => call<Job>(`/api/jobs/${id}`),
+  /** A finished take's video as a clip upload: with its clips when it has them, or the transition alone. */
+  useJob: (id: string, full = true) => call<Upload>(`/api/jobs/${id}/use${full ? '' : '?full=false'}`, { method: 'POST' }),
   upload: (file: File, role: 'a' | 'b' | 'mid') => {
     const body = new FormData()
     body.append('file', file)
@@ -253,6 +259,7 @@ export const api = {
       body: JSON.stringify({ message, selection }),
     }),
   sequences: () => call<Sequence[]>('/api/sequences?limit=30'),
+  sequence: (id: string) => call<Sequence>(`/api/sequences/${id}`),
   createSequence: (body: { shots: ShotIn[]; segments: SegmentIn[]; story?: string }) =>
     call<Sequence>('/api/sequences', {
       method: 'POST',

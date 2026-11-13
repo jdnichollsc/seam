@@ -311,9 +311,21 @@ def list_models(refresh: bool = False) -> dict[str, Any]:
     return {"backend": backend, "models": model_status.listing(settings, _engine().catalog(), backend, refresh)}
 
 
+_root_lock = threading.Lock()
+_root_asked = 0.0  # when the local ComfyUI last had no answer: it is not asked again for a few seconds
+
+
 def _downloads() -> Downloads:
+    global _root_asked
     if downloads is None:
         raise HTTPException(503, "engine not started")
+    if downloads.root is None and _is_loopback(settings.host):  # SEAM_MODELS_DIR is not set: ask the local ComfyUI
+        with _root_lock:  # one request asks; a folder that was found is never taken back
+            if downloads.root is None and time.monotonic() - _root_asked > 10:
+                if found := model_status.comfy_models_dir():
+                    downloads.root = found
+                else:
+                    _root_asked = time.monotonic()
     return downloads
 
 
@@ -322,8 +334,10 @@ def _download_blocker() -> str | None:
     renders does not matter: the files go to your GPU's models folder either way."""
     if not _is_loopback(settings.host):
         return "Downloads are only available when Seam runs on localhost"
-    if not settings.models_dir or not settings.models_dir.is_dir():
-        return "Set SEAM_MODELS_DIR to your ComfyUI models folder and restart Seam, or use the command"
+    root = _downloads().root
+    if not root or not root.is_dir():
+        return ("Start your local ComfyUI so Seam can find its models folder (or set SEAM_MODELS_DIR and restart "
+                "Seam), or use the command")
     return None
 
 
@@ -336,7 +350,8 @@ def list_downloads() -> dict[str, Any]:
     """Every model per feature, ready or not on your GPU and on Comfy Cloud, and the sets Seam can fetch."""
     e = _engine()
     local = model_status.object_info(settings, backends.LOCAL)
-    cloud = model_status.object_info(settings, backends.CLOUD) if backends.cloud_key(settings)[0] else None
+    # Comfy Cloud's node list is about 10 MB: the panel opens without it and asks again while it is read
+    cloud, checking = model_status.info_or_warm(settings, backends.CLOUD) if backends.cloud_key(settings)[0] else (None, False)
     features = [("transitions", e.catalog()), ("shots", load_image_models(settings.workflows_dir)),
                 ("orbit", {"orbit": load_spec(settings.workflows_dir, "orbit")})]
     models = []
@@ -345,7 +360,8 @@ def list_downloads() -> dict[str, Any]:
             ls, lr = model_status.state(spec, backends.LOCAL, local)
             cs, cr = model_status.state(spec, backends.CLOUD, cloud)
             if cloud is None and backends.CLOUD in spec.backends:
-                cs, cr = "not_checked", "add a Comfy Cloud key to check"
+                cs, cr = "not_checked", "checking Comfy Cloud…" if checking else "add a Comfy Cloud key to check" \
+                    if not backends.cloud_key(settings)[0] else "Comfy Cloud did not answer"
             ms = set_for(spec.model)
             models.append({"id": spec.model, "label": spec.label, "kind": spec.kind, "feature": feature,
                            "set": ms.id if ms else None, "local": {"state": ls, "reason": lr},
@@ -353,8 +369,8 @@ def list_downloads() -> dict[str, Any]:
     d = _downloads()
     blocker = _download_blocker()
     sets = d.listing()
-    return {"backend": backends.current(settings)[0], "blocker": blocker, "free": d.free(),
-            "models": models, "sets": sets}
+    return {"backend": backends.current(settings)[0], "blocker": blocker, "free": d.free(), "checking": checking,
+            "models_dir": str(d.root) if d.root else None, "models": models, "sets": sets}
 
 
 @app.post("/api/downloads/{set_id}", status_code=202)
@@ -460,19 +476,24 @@ async def _upload_clip(file: UploadFile, role: str) -> dict[str, Any]:
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / f"clip{Path(file.filename or 'x.mp4').suffix or '.mp4'}"
         src.write_bytes(data)
-        try:
-            # a clip in a sequence may sit between cuts (long); next to a transition the sequence checks 1-6 s
-            limits = media.LONG_CLIP_SECONDS if role == "mid" else media.CLIP_SECONDS
-            clip, seconds = await asyncio.to_thread(store_clip, settings, src, limits)
-            ends = {}
-            for end in (("first", "last") if role == "mid" else ("last",) if role == "a" else ("first",)):
-                frame = await asyncio.to_thread(media.clip_frame, clip, Path(tmp) / f"{end}.png", end == "last")
-                ends[end] = store_upload(settings, frame)
-            stored = ends.get("last") or ends["first"]  # a: the frame the transition leaves from; b: lands on
-        except ValueError as e:
-            raise HTTPException(400, str(e)) from e
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
+        return await _clip_out(src, role, Path(tmp))
+
+
+async def _clip_out(src: Path, role: str, tmp: Path) -> dict[str, Any]:
+    """A video file as a stored clip upload, with the end frames its role needs."""
+    try:
+        # a clip in a sequence may sit between cuts (long); next to a transition the sequence checks 1-6 s
+        limits = media.LONG_CLIP_SECONDS if role == "mid" else media.CLIP_SECONDS
+        clip, seconds = await asyncio.to_thread(store_clip, settings, src, limits)
+        ends = {}
+        for end in (("first", "last") if role == "mid" else ("last",) if role == "a" else ("first",)):
+            frame = await asyncio.to_thread(media.clip_frame, clip, tmp / f"{end}.png", end == "last")
+            ends[end] = store_upload(settings, frame)
+        stored = ends.get("last") or ends["first"]  # a: the frame the transition leaves from; b: lands on
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
     w, h = media.image_size(stored)
     out = {"id": stored.name, "url": f"/uploads/{stored.name}", "width": w, "height": h,
            "clip": clip.name, "clip_url": f"/uploads/{clip.name}", "clip_seconds": round(seconds, 2)}
@@ -515,6 +536,22 @@ def describe_shot(upload_id: str) -> dict[str, Any]:
 @app.get("/api/jobs")
 def list_jobs(limit: int = 50) -> list[dict[str, Any]]:
     return [_job_out(j) for j in _engine().store.list(limit=min(limit, 200))]
+
+
+@app.post("/api/jobs/{job_id}/use")
+async def use_job(job_id: str, full: bool = True) -> dict[str, Any]:
+    """A finished take's video as an ordinary clip upload (a copy), so it can be a shot of a sequence. Nothing is
+    generated. `full`: the version with its clips when the take has one; false: the transition alone."""
+    job = _engine().store.get(job_id)
+    if job is None or job.deleted_at:
+        raise HTTPException(404, "job not found")
+    if job.status != "succeeded" or not job.output:
+        raise HTTPException(409, "that take has not finished")
+    src = settings.outputs_dir / Path((full and job.extra.get("merged")) or job.output).name
+    if not src.is_file():
+        raise HTTPException(404, "that take's video is no longer on disk")
+    with tempfile.TemporaryDirectory() as tmp:
+        return await _clip_out(src, "mid", Path(tmp))
 
 
 @app.get("/api/jobs/{job_id}")
@@ -972,9 +1009,23 @@ if _previews.exists():
     app.mount("/previews", StaticFiles(directory=_previews), name="previews")
 if EXAMPLES_DIR.exists():
     app.mount("/examples", StaticFiles(directory=EXAMPLES_DIR), name="examples")
+WEB_PAGES = ("/sequence", "/generate", "/sequences/{item_id}", "/takes/{item_id}")
+
+
+def mount_web(target: FastAPI, web: Path) -> None:
+    """Serve the built web app at `/`, and its page at each of its own paths, so a reload or a pasted link opens
+    the same place. Only these paths: anything else keeps the static mount's 404."""
+    def page() -> FileResponse:
+        return FileResponse(web / "index.html", headers={"Cache-Control": "no-cache"})
+
+    for path in WEB_PAGES:
+        target.add_api_route(path, page, methods=["GET"], include_in_schema=False)
+    target.mount("/", StaticFiles(directory=web, html=True), name="web")
+
+
 _web = PACKAGE_DIR / "static" / "web"
 if _web.exists():
-    app.mount("/", StaticFiles(directory=_web, html=True), name="web")
+    mount_web(app, _web)
 else:
     @app.get("/")
     def index() -> dict[str, str]:

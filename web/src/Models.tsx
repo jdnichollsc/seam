@@ -66,6 +66,7 @@ function GetSet({ set, state, onChanged }: { set: DownloadSet; state: DownloadsS
       <p className="get-total">
         {missing.length} file{missing.length === 1 ? '' : 's'} · {gb(set.remaining)} to download
         {state.free != null && ` · ${gb(state.free)} free`}
+        {state.models_dir && missing.length > 0 && <> · into <code>{state.models_dir}</code></>}
       </p>
       <ul className="get-licenses">
         {set.licenses.map((l) => (
@@ -110,10 +111,21 @@ export function ModelsDialog({ onClose, onReady }: { onClose: () => void; onRead
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
   const labels = useRef<Record<string, string>>({})
+  const again = useRef(0)
+  const shown = useRef(true)
   const load = useCallback(() => api.downloads().then((s) => {
     labels.current = Object.fromEntries(s.sets.map((x) => [x.id, x.label]))
     setState(s)
+    window.clearTimeout(again.current)
+    if (s.checking && shown.current) again.current = window.setTimeout(load, 4000)  // Comfy Cloud's list takes a while the first time
   }).catch((e) => setError((e as Error).message)), [])
+  useEffect(() => {
+    shown.current = true
+    return () => {
+      shown.current = false  // an answer that arrives after closing must not ask again
+      window.clearTimeout(again.current)
+    }
+  }, [])
   useEffect(() => {
     dialog.current?.showModal()
     load()
