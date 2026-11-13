@@ -314,11 +314,10 @@ def _downloads() -> Downloads:
 
 
 def _download_blocker() -> str | None:
-    """Why this server cannot fetch models (the browser then shows the CLI command); None when it can."""
+    """Why this server cannot fetch models (the browser then shows the CLI command); None when it can. Where Seam
+    renders does not matter: the files go to your GPU's models folder either way."""
     if not _is_loopback(settings.host):
         return "Downloads are only available when Seam runs on localhost"
-    if backends.current(settings)[0] != backends.LOCAL:
-        return "Seam renders on Comfy Cloud: its models are provided there, nothing to download"
     if not settings.models_dir or not settings.models_dir.is_dir():
         return "Set SEAM_MODELS_DIR to your ComfyUI models folder and restart Seam, or use the command"
     return None
@@ -350,11 +349,6 @@ def list_downloads() -> dict[str, Any]:
     d = _downloads()
     blocker = _download_blocker()
     sets = d.listing()
-    if backends.current(settings)[0] == backends.CLOUD:
-        for row in sets:  # "provided there" is only true for models Comfy Cloud offers
-            cloud_states = {m["cloud"]["state"] for m in models if m["set"] == row["id"]}
-            if cloud_states and cloud_states <= {"not_offered"}:
-                row["blocker"] = "Not offered on Comfy Cloud: switch to Your GPU to download it"
     return {"backend": backends.current(settings)[0], "blocker": blocker, "free": d.free(),
             "models": models, "sets": sets}
 

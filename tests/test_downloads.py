@@ -237,7 +237,7 @@ def test_server_refuses_without_acceptance_on_cloud_and_off_loopback(seam, monke
     assert client.post("/api/downloads/orbit", json={"accept": False}).status_code == 422
     assert client.post("/api/downloads/nope", json={"accept": True}).status_code == 404
     monkeypatch.setattr(backends, "current", lambda _s: (backends.CLOUD, "test"))
-    assert client.post("/api/downloads/orbit", json={"accept": True}).status_code == 409
+    assert client.get("/api/downloads").json()["blocker"] is None  # rendering on Cloud: your GPU's folder still fills
     monkeypatch.setattr(backends, "current", lambda _s: (backends.LOCAL, "test"))
     monkeypatch.setattr(server, "settings", replace(s, host="0.0.0.0"))
     r = client.post("/api/downloads/orbit", json={"accept": True})
@@ -269,11 +269,8 @@ def test_panel_states_ready_missing_needs_nodes(seam, monkeypatch: pytest.Monkey
     assert states == {"ready": "ready", "missing": "missing", "needs_nodes": "needs_nodes"}
 
 
-def test_cloud_blocker_per_set_and_remaining_counts_parts(seam, monkeypatch: pytest.MonkeyPatch) -> None:
-    client, s = seam
-    monkeypatch.setattr(backends, "current", lambda _s: (backends.CLOUD, "test"))
-    sets = {x["id"]: x for x in client.get("/api/downloads").json()["sets"]}
-    assert "switch to Your GPU" in sets["orbit"]["blocker"]  # Cloud does not offer the orbit
+def test_remaining_counts_parts(seam) -> None:
+    _client, s = seam
     f = downloads.SETS["orbit"].files[-1]
     (s.models_dir / f.folder).mkdir()
     (s.models_dir / f.folder / (f.name + ".part")).write_bytes(b"x" * 1000)
