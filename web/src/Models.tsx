@@ -112,13 +112,20 @@ export function ModelsDialog({ onClose, onReady }: { onClose: () => void; onRead
   const [toast, setToast] = useState<string | null>(null)
   const labels = useRef<Record<string, string>>({})
   const again = useRef(0)
+  const shown = useRef(true)
   const load = useCallback(() => api.downloads().then((s) => {
     labels.current = Object.fromEntries(s.sets.map((x) => [x.id, x.label]))
     setState(s)
     window.clearTimeout(again.current)
-    if (s.checking) again.current = window.setTimeout(load, 4000)  // Comfy Cloud's list takes a while the first time
+    if (s.checking && shown.current) again.current = window.setTimeout(load, 4000)  // Comfy Cloud's list takes a while the first time
   }).catch((e) => setError((e as Error).message)), [])
-  useEffect(() => () => window.clearTimeout(again.current), [])
+  useEffect(() => {
+    shown.current = true
+    return () => {
+      shown.current = false  // an answer that arrives after closing must not ask again
+      window.clearTimeout(again.current)
+    }
+  }, [])
   useEffect(() => {
     dialog.current?.showModal()
     load()

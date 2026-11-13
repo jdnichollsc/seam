@@ -311,11 +311,21 @@ def list_models(refresh: bool = False) -> dict[str, Any]:
     return {"backend": backend, "models": model_status.listing(settings, _engine().catalog(), backend, refresh)}
 
 
+_root_lock = threading.Lock()
+_root_asked = 0.0  # when the local ComfyUI last had no answer: it is not asked again for a few seconds
+
+
 def _downloads() -> Downloads:
+    global _root_asked
     if downloads is None:
         raise HTTPException(503, "engine not started")
     if downloads.root is None and _is_loopback(settings.host):  # SEAM_MODELS_DIR is not set: ask the local ComfyUI
-        downloads.root = model_status.comfy_models_dir()
+        with _root_lock:  # one request asks; a folder that was found is never taken back
+            if downloads.root is None and time.monotonic() - _root_asked > 10:
+                if found := model_status.comfy_models_dir():
+                    downloads.root = found
+                else:
+                    _root_asked = time.monotonic()
     return downloads
 
 

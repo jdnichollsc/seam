@@ -68,6 +68,9 @@ def info_or_warm(settings: Settings, backend: str) -> tuple[dict[str, Any] | Non
     def warm() -> None:
         try:
             _read(settings, backend)
+        except Exception:  # noqa: BLE001 — an unread list is remembered as unknown, so the panel stops asking
+            with _lock:
+                _cache[key] = (time.monotonic(), None)
         finally:
             with _lock:
                 _warming.discard(key)

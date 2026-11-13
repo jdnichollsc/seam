@@ -252,9 +252,34 @@ def test_models_folder_comes_from_the_local_comfyui_when_not_set(seam, tmp_path:
     body = client.get("/api/downloads").json()
     assert "Start your local ComfyUI" in body["blocker"] and body["models_dir"] is None
     assert client.post("/api/downloads/orbit", json={"accept": True}).status_code == 409
-    monkeypatch.setattr(server.model_status, "comfy_models_dir", lambda: s.models_dir)
+    asked = []
+    monkeypatch.setattr(server.model_status, "comfy_models_dir", lambda: asked.append(1) or s.models_dir)
+    assert client.get("/api/downloads").json()["models_dir"] is None and not asked  # just said no: not asked again yet
+    monkeypatch.setattr(server, "_root_asked", 0.0)
     body = client.get("/api/downloads").json()
     assert body["blocker"] is None and body["models_dir"] == str(s.models_dir) and body["free"]
+    monkeypatch.setattr(server.model_status, "comfy_models_dir", lambda: None)  # ComfyUI stopped later
+    assert client.get("/api/downloads").json()["models_dir"] == str(s.models_dir) and len(asked) == 1
+
+
+def test_a_cloud_list_that_fails_to_read_is_not_asked_for_forever(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    from seam import models
+    from seam.config import Settings
+
+    def broken(_settings, _backend):
+        raise RuntimeError("no network")
+
+    monkeypatch.setattr(models, "_fetch", broken)
+    monkeypatch.setattr(models, "_cache", {})
+    settings = Settings()
+    assert models.info_or_warm(settings, "cloud") == (None, True)
+    for _ in range(100):
+        if not models._warming:
+            break
+        threading.Event().wait(0.05)
+    assert models.info_or_warm(settings, "cloud") == (None, False)
 
 
 def test_comfyui_models_folder_is_read_from_its_folder_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
