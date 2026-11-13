@@ -37,12 +37,18 @@ def test_five_cuts_give_six_shots_within_a_frame(tmp_path: Path) -> None:
     for shot, sec in zip(found["shots"], lengths):
         assert abs(shot["start"] - at) <= 1 / FPS + 1e-3
         at += sec
-    assert abs(found["shots"][-1]["end"] - sum(lengths)) < 0.05
+    assert abs(found["shots"][-1]["end"] - sum(lengths)) <= 1 / FPS + 1e-3
 
 
 def test_a_flash_of_one_frame_is_not_a_shot(tmp_path: Path) -> None:
-    found = remake.analyze(_video(tmp_path / "ref.mp4", [2.0, 1 / FPS, 2.0, 1 / FPS]))
-    assert [(s["start"], round(s["end"], 1)) for s in found["shots"]] == [(0.0, 2.0), (2.0, 4.1)]
+    from PIL import Image
+
+    video = _video(tmp_path / "ref.mp4", [2.0, 1 / FPS, 2.0, 1 / FPS])  # black, a white frame, navy, a yellow frame
+    shots = remake.analyze(video)["shots"]
+    assert [(s["start"], s["end"]) for s in shots] == [(0.0, 2.0), (2.0, 4.083)]  # ffmpeg reports a flash once
+    d = remake.draft(video, shots, tmp_path / "work")
+    r, g, b = Image.open(d["shots"][1]["image"]).convert("RGB").getpixel((10, 10))
+    assert b > 80 and r < 40 and g < 40  # the second shot's still is its own picture (navy), not the white flash
 
 
 def test_draft_is_a_sequence_the_engine_accepts(tmp_path: Path) -> None:
@@ -77,6 +83,8 @@ def test_beats_split_what_is_too_long_and_join_the_shortest_neighbours() -> None
         {"start": 0, "end": 50}, {"start": 50, "end": 100}, {"start": 100, "end": 150}]
     joined = remake.beats([{"start": 0, "end": 5}, {"start": 5, "end": 6}, {"start": 6, "end": 7}, {"start": 7, "end": 12}], most=3)
     assert joined == [{"start": 0, "end": 5}, {"start": 5, "end": 7}, {"start": 7, "end": 12}]
+    forty = [{"start": 0, "end": 40}, {"start": 40, "end": 60}, {"start": 60, "end": 80}, {"start": 80, "end": 120}]
+    assert remake.beats(forty, most=2, longest=60) == [{"start": 0, "end": 60}, {"start": 60, "end": 120}]
     with pytest.raises(ValueError, match="does not fit"):
         remake.beats([{"start": i * 50.0, "end": (i + 1) * 50.0} for i in range(4)], most=3, longest=60)
 

@@ -202,8 +202,14 @@ def _remake(args: argparse.Namespace) -> int:
                            files={"file": (args.video.name, fh, kind)}, timeout=900)
     except httpx.ConnectError:
         raise SystemExit(f"Seam server not reachable at {base}: start it with `seam serve`.") from None
+    except httpx.HTTPError as e:
+        raise SystemExit(f"Seam did not answer in time or the connection dropped: {e}") from None
     if r.status_code >= 400:
-        raise SystemExit(f"{r.status_code}: {r.json().get('detail', r.text) if r.content else ''}")
+        try:
+            why = r.json().get("detail", r.text)
+        except ValueError:
+            why = r.text[:300]
+        raise SystemExit(f"{r.status_code}: {why}")
     print(json.dumps(r.json(), indent=2))
     return 0
 

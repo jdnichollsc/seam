@@ -824,7 +824,7 @@ def _remake(rid: str, src: Path, folder: Path, footage: bool, most: int) -> dict
 async def create_remake(file: UploadFile = File(...), footage: bool = False, max_beats: int = remake.MAX_BEATS) -> dict[str, Any]:
     """A reference video (up to 3 minutes, 200 MB) as a sequence draft: its cuts become the shots, every hand-off a
     cut. `draft` is the body of POST /api/sequences; nothing renders here and nothing is queued. Re-create
-    (default): each shot is the first frame of its part of the video; `footage`: that part of the video itself.
+    (default): each shot is a still from the start of its part of the video; `footage`: that part of the video itself.
     The video is not kept."""
     if (file.content_type or "") not in VIDEO_TYPES:
         raise HTTPException(400, "a reference is a video: mp4, mov or webm")
@@ -841,6 +841,9 @@ async def create_remake(file: UploadFile = File(...), footage: bool = False, max
                     raise HTTPException(413, "video larger than 200 MB")
                 fh.write(chunk)
         out = await asyncio.to_thread(_remake, rid, src, folder, footage, max_beats)
+        src.unlink(missing_ok=True)
+        shutil.rmtree(folder / "work", ignore_errors=True)
+        (folder / "remake.json").write_text(json.dumps(out), encoding="utf-8")
     except HTTPException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
@@ -850,9 +853,6 @@ async def create_remake(file: UploadFile = File(...), footage: bool = False, max
     except Exception as e:  # noqa: BLE001
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
-    src.unlink(missing_ok=True)
-    shutil.rmtree(folder / "work", ignore_errors=True)
-    (folder / "remake.json").write_text(json.dumps(out), encoding="utf-8")
     return out
 
 

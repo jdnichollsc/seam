@@ -206,7 +206,7 @@ async def analyze_video(path: str, footage: bool = False, max_beats: int = 8) ->
     sequence draft. Nothing renders and nothing is queued.
 
     Its cuts become the shots (at most max_beats, 2-8: neighbours are joined when there are more) and every
-    hand-off is a cut. Default: each shot is a still, the first frame of its part of the video, to re-create with
+    hand-off is a cut. Default: each shot is a still from the start of its part of the video, to re-create with
     the user's own or generated images; footage=True: each shot is that part of the video itself. Returns shots
     (file paths), holds, segments and story, ready for create_sequence, plus beats (where each shot sits in the
     video) and notes (what the limits changed). Show the user the draft and agree on it first: replace stills, turn
@@ -223,6 +223,8 @@ async def analyze_video(path: str, footage: bool = False, max_beats: int = 8) ->
                 r = await c.post("/api/remakes", params={"footage": footage, "max_beats": max_beats}, files={"file": (p.name, fh, kind)})
             except httpx.ConnectError as e:
                 raise RuntimeError(f"Seam server not reachable at {BASE} — start it with `seam serve`.") from e
+            except httpx.HTTPError as e:
+                raise RuntimeError(f"Seam did not answer in time or the connection dropped: {e}") from e
     if r.status_code >= 400:
         raise RuntimeError(f"POST /api/remakes → {r.status_code}: {r.text[:400]}")
     out = r.json()

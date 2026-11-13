@@ -18,6 +18,7 @@ HOLD = (0.5, 10.0)  # an image next to a cut (engine.HOLD_SECONDS)
 CLIP = media.LONG_CLIP_SECONDS  # a clip between cuts
 SCENE = 0.3  # ffmpeg's scene score a cut exceeds
 SHORTEST = 0.2  # seconds: nothing shorter counts as a shot
+INTO = 0.1  # seconds into a beat its still is taken at
 _PTS = re.compile(r"pts_time:([0-9.]+)")
 
 
@@ -39,9 +40,13 @@ def analyze(video: Path) -> dict[str, Any]:
     if info.duration > MAX_SECONDS + 0.05:
         raise ValueError(f"a reference video is up to {MAX_SECONDS / 60:g} minutes (this one is {info.duration:.0f} s)")
     edges = [0.0]
-    for t in cut_times(video):  # a "shot" of a frame or two is a flash or a detection echo: it stays with the next
-        if t - edges[-1] >= SHORTEST and info.duration - t >= SHORTEST:
+    for t in cut_times(video):
+        if info.duration - t < SHORTEST:
+            break  # a flash at the very end stays with the last shot
+        if t - edges[-1] >= SHORTEST:
             edges.append(t)
+        elif len(edges) > 1:
+            edges[-1] = t  # a flash of a frame or two ends the shot before it: the next starts on its own picture
     edges.append(info.duration)
     return {"source": {"duration": round(info.duration, 3), "fps": round(info.fps, 3), "width": info.width,
                        "height": info.height, "has_audio": info.has_audio},
@@ -56,11 +61,20 @@ def beats(shots: list[dict[str, float]], most: int = MAX_BEATS, longest: float |
         n = max(1, math.ceil((s["end"] - s["start"]) / longest - 1e-9)) if longest else 1
         step = (s["end"] - s["start"]) / n
         out += [{"start": s["start"] + i * step, "end": s["start"] + (i + 1) * step} for i in range(n)]
+    parts = list(out)
     while len(out) > most:
         spans = [(out[i + 1]["end"] - out[i]["start"], i) for i in range(len(out) - 1)]
         fits = [x for x in spans if longest is None or x[0] <= longest + 1e-6]
-        if not fits:
-            raise ValueError(f"this video does not fit in {most} shots of up to {longest:g} s")
+        if not fits:  # joining the shortest first got stuck: fill each beat as far as it goes, the fewest there can be
+            out = []
+            for p in parts:
+                if out and p["end"] - out[-1]["start"] <= longest + 1e-6:
+                    out[-1] = {"start": out[-1]["start"], "end": p["end"]}
+                else:
+                    out.append(dict(p))
+            if len(out) > most:
+                raise ValueError(f"this video does not fit in {most} shots of up to {longest:g} s")
+            break
         _, i = min(fits)
         out[i:i + 2] = [{"start": out[i]["start"], "end": out[i + 1]["end"]}]
     return [{"start": round(b["start"], 3), "end": round(b["end"], 3)} for b in out]
@@ -82,7 +96,7 @@ def _cut(video: Path, start: float, end: float, dst: Path) -> Path:
 def draft(video: Path, shots: list[dict[str, float]], work: Path, footage: bool = False,
           most: int = MAX_BEATS) -> dict[str, Any]:
     """The sequence Seam proposes, as files in `work`: one shot per beat and a cut at every hand-off (the only
-    hand-off this analysis can tell). Re-create (default): each beat is its first frame, shown for the beat's
+    hand-off this analysis can tell). Re-create (default): each beat is a frame from its start, shown for the beat's
     length; `footage`: each beat is that part of the video itself. `notes` says where the engine's limits changed
     something."""
     if not 2 <= most <= MAX_BEATS:
@@ -105,5 +119,7 @@ def draft(video: Path, shots: list[dict[str, float]], work: Path, footage: bool 
             notes.append(f"shot {i + 1} is under {CLIP[0]:g} s: it is an image, shown for {hold:g} s")
         elif abs(hold - seconds) > 0.01:
             notes.append(f"shot {i + 1} lasts {seconds:.1f} s in the video; an image shows for {hold:g} s")
-        out.append({**beat, "image": str(_frame(video, b["start"], work / f"beat{i + 1}.png")), "hold": round(hold, 2)})
+        # a moment into the beat, not its first frame: that one may be a flash or the tail of a blend
+        at = b["start"] + min(INTO, seconds / 2)
+        out.append({**beat, "image": str(_frame(video, at, work / f"beat{i + 1}.png")), "hold": round(hold, 2)})
     return {"shots": out, "segments": [{"preset": "cut"} for _ in out[1:]], "story": "", "notes": notes}
