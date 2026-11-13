@@ -236,6 +236,7 @@ browser / CLI / agent (MCP)
 | [FLUX.2 Klein 4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-4B) | optional: a model of Generate shots, when your ComfyUI or Comfy Cloud has it; Seam does not download it | Apache 2.0 |
 | MiniMax-H3 Ref2VA + ORB360 LoRA | optional: the 360° orbit of Generate shots, when your ComfyUI has them; Seam does not download them | MiniMax H3 Community License; ORB360: see its model card |
 | [Juggernaut XL v9](https://huggingface.co/RunDiffusion/Juggernaut-XL-v9) | optional: a model of Generate shots, when your ComfyUI or Comfy Cloud has it; Seam does not download it | CreativeML OpenRAIL-M (use restrictions apply) |
+| [MiniMax H3 Image](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image) + Qwen3-VL | optional: a model of Generate shots, one image at a time; needs ComfyUI 0.45.3 or newer | MiniMax H3 Image Community License |
 
 Seam's code is MIT ([LICENSE](LICENSE)). The models keep their own licenses; read them before commercial use.
 The effect presets are our own text, inspired by common transition concepts — no third-party prompts or media.

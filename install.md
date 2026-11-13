@@ -36,7 +36,7 @@ uv run python scripts/download_models.py --models-dir "<path to ComfyUI>/models"
 
 `--only l25` is everything the launch effects use (LTX-2.5 + the Gemma-4 E2B shot reader). Without `--only` the
 script fetches the two default sets, `l25` and `shot` (Z-Image-Turbo for Generate shot). Every other set is optional
-and named with `--only`: `l23` (LTX-2.3 + its transition LoRA), `wan22`, `shot_klein`, `shot_juggernaut` and `orbit`
+and named with `--only`: `l23` (LTX-2.3 + its transition LoRA), `wan22`, `shot_klein`, `shot_juggernaut`, `shot_h3` (MiniMax H3 Image) and `orbit`
 (MiniMax-H3 Ref2VA + ORB360, the 360° orbit). The script prints each set's licenses; read them first.
 
 Or get them from the app: with your local ComfyUI running, open **Models** in the header (Seam asks ComfyUI where

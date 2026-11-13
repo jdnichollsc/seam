@@ -30,6 +30,7 @@ class WorkflowSpec:
     seconds_as_frames: bool = False          # its length input counts frames: seconds * fps + 1
     max_prompt: int = 0                      # image: the longest prompt its form takes
     quality: tuple[tuple[str, float, int], ...] = ()  # image: (name, megapixels, steps)
+    max_count: int = 4                       # image: how many it makes in one run
 
     def graph(self) -> dict[str, Any]:
         return json.loads(self.workflow_file.read_text(encoding="utf-8"))
@@ -43,6 +44,7 @@ def load_spec(workflows_dir: Path, model: str) -> WorkflowSpec:
                         seconds=tuple(data.get("seconds", (5,))), prompt=data.get("prompt", "plain"),
                         backends=tuple(data.get("backends", ("local", "cloud"))),
                         seconds_as_frames=data.get("seconds_as_frames", False), max_prompt=data.get("max_prompt", 0),
+                        max_count=data.get("max_count", 4),
                         quality=tuple((k, *v) for k, v in data.get("quality", {}).items()))
 
 
