@@ -64,7 +64,8 @@ function GetSet({ set, state, onChanged }: { set: DownloadSet; state: DownloadsS
         ))}
       </ul>
       <p className="get-total">
-        {missing.length} file{missing.length === 1 ? '' : 's'} · {gb(set.remaining)} to download
+        {missing.length === 0 ? `All ${set.files.length} files installed`
+          : `${missing.length} file${missing.length === 1 ? '' : 's'} · ${gb(set.remaining)} to download`}
         {state.free != null && ` · ${gb(state.free)} free`}
         {state.models_dir && missing.length > 0 && <> · into <code>{state.models_dir}</code></>}
       </p>
@@ -84,6 +85,8 @@ function GetSet({ set, state, onChanged }: { set: DownloadSet; state: DownloadsS
           <span className="bar" style={{ ['--p' as string]: run.total ? run.done / run.total : 0 }} />
           <button className="btn btn-quiet" onClick={() => act(() => api.cancelDownload(set.id))}>Cancel</button>
         </div>
+      ) : missing.length === 0 ? (
+        <p className="get-note" aria-live="polite">Installed. Nothing left to download.</p>
       ) : (
         <>
           <label className="get-accept">
