@@ -66,7 +66,10 @@ separate transitions: shot 1 → shot 2 → … with one transition at each hand
    aspect (it gets centre-cropped). If the user has an idea for the whole film (who, where, mood), pass it as
    `story` (≤300 chars); each transition's own direction stays in its `prompt_extra`.
 2. Pick an effect **per hand-off** (the same routing as above); varying effects reads better than one repeated, but
-   follow the user. `seconds` per hand-off as for a single take.
+   follow the user. `seconds` per hand-off as for a single take. A hand-off can be `{"preset": "cut"}`: no
+   transition, nothing renders, the shots meet with a hard cut (an image next to a cut shows for 2 s). Use it when
+   the user wants their own clips in order without a generated change; a clip whose hand-offs are all cuts may be
+   up to 60 s, a clip next to a transition stays 1-6 s.
    Before rendering a long one, `rough_cut(shots, segments)` shows the order and pacing in seconds, for free: shots,
    clips and a card naming each transition. Rendered transitions will replace those cards and run longer.
 3. `create_sequence(shots, segments, story?)` — `segments` has one entry per hand-off: `{"preset": …,

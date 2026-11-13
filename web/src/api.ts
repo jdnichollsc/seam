@@ -51,7 +51,7 @@ export type Upload = {
 
 export type SequenceStatus = 'running' | 'assembling' | 'succeeded' | 'failed' | 'cancelled'
 
-/** Shots joined by one transition per hand-off; `segments` holds the current take (job id) of each. */
+/** Shots joined by one hand-off each; `segments` holds the current take (job id) of each, or null for a cut. */
 export type Sequence = {
   id: string
   status: SequenceStatus
@@ -60,8 +60,8 @@ export type Sequence = {
   height: number
   created_at: number
   updated_at: number
-  shots: { first: string; last: string; first_url: string; last_url: string; clip?: string; clip_url?: string }[]
-  segments: string[]
+  shots: { first: string; last: string; first_url: string; last_url: string; clip?: string; clip_url?: string; hold?: number }[]
+  segments: (string | null)[]  // null: a cut (nothing generated)
   output_url?: string
   poster_url?: string
   sheet_url?: string

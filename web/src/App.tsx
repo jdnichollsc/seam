@@ -94,6 +94,8 @@ const ACTIVE = new Set(['queued', 'running'])
 /** Effect picker value for "pick one of the qualified effects for me" (resolved when the take is made). */
 const SURPRISE = '__surprise__'
 const NO_EFFECT = 'none'  // the prompt alone directs the in-between; Surprise me never picks it
+const CUT = 'cut'  // a sequence hand-off with nothing generated: the two shots meet with a hard cut
+const CLIP_HINT = 'clips 1–6 s, up to 60 s between cuts'
 const MOTION = '(prefers-reduced-motion: no-preference)'
 const REPO = 'https://github.com/jdnichollsc/seam'
 
@@ -215,7 +217,7 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
           <Icon name="plus" /> {label}
         </button>
         <span className="add-next-note">
-          {blocked ?? 'Choose or drop the next image or 1–6 s clip. You check the effect into it before anything renders.'}
+          {blocked ?? `Choose or drop the next image or clip (${CLIP_HINT}). You check the effect into it before anything renders.`}
         </span>
         {choose}
       </div>
@@ -233,6 +235,7 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
           <span>Effect · {seconds} s</span>
           <select value={effect} onChange={(e) => setEffect(e.target.value)} disabled={busy}>
             <option value="" disabled>Pick an effect</option>
+            <option value={CUT}>Cut (no transition)</option>
             {effects.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </select>
         </label>
@@ -241,21 +244,21 @@ function NextShot({ label, fromUrl, busy, disabled, blocked, effects, defaultEff
           <figcaption>New shot</figcaption>
         </figure>
       </div>
-      <ModelSelect value={modelChoice} onChange={setModelChoice} effectModel={effectModel} disabled={busy} />
-      <label className="next-direction">
+      {effect !== CUT && <ModelSelect value={modelChoice} onChange={setModelChoice} effectModel={effectModel} disabled={busy} />}
+      {effect !== CUT && <label className="next-direction">
         <span>What happens during this transition · optional <Count n={direction.length} max={600} /></span>
         <textarea rows={2} maxLength={600} value={direction} disabled={busy}
           placeholder="She turns toward the camera and smiles, warm evening light"
           onChange={(e) => setDirection(e.target.value)} />
-      </label>
+      </label>}
       <div className="next-actions">
         <button className="btn btn-primary btn-sm" disabled={busy || !effect}
           onClick={async () => { if (await onMake(file, effect, direction.trim(), modelChoice)) { setFile(null); setDirection('') } }}>
-          {busy ? 'Adding…' : 'Make this transition'}
+          {busy ? 'Adding…' : effect === CUT ? 'Add it with a cut' : 'Make this transition'}
         </button>
         <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => input.current?.click()}>Change shot</button>
         <button className="btn btn-outline btn-sm" disabled={busy} onClick={() => setFile(null)}>Cancel</button>
-        <span className="add-next-note">Only this transition renders; the takes before it are reused.</span>
+        <span className="add-next-note">{effect === CUT ? 'Nothing renders: the video joins again.' : 'Only this transition renders; the takes before it are reused.'}</span>
       </div>
       {choose}
     </div>
@@ -268,15 +271,15 @@ type Remake = { preset: string; model: string; seconds: number; prompt_extra: st
 /** "New take" of one transition in a sequence: keep or change its effect, length and direction, pin a seed or not.
  *  Unchanged, it is a plain re-roll (a new seed). Only this transition renders. */
 function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
-  take: Job
+  take: Job | null  // null: the hand-off is a cut; this gives it a transition
   effects: FxOption[]
   story: string  // the sequence's story now: the new take uses it
   busy: boolean
   onMake: (body: Remake) => Promise<boolean>
   onClose: () => void
 }) {
-  const p = take.params
-  const [fx, setFx] = useState(effects.some((e) => e.id === p.preset) ? p.preset : (effects[0]?.id ?? ''))
+  const p: Partial<Job['params']> = take?.params ?? {}
+  const [fx, setFx] = useState(p.preset && effects.some((e) => e.id === p.preset) ? p.preset : (effects[0]?.id ?? ''))
   const models = useContext(ModelsContext)
   const effect = effects.find((e) => e.id === fx)
   // a model the user picked stays picked; the effect's own model reads as the default
@@ -286,16 +289,19 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
   const length = lens.includes(secs) ? secs : lens[0]
   const [extra, setExtra] = useState(p.prompt_extra ?? '')
   const [seed, setSeed] = useState('')
-  const changed = fx !== p.preset || (pick || effect?.model) !== p.model || length !== (p.seconds ?? 5) || extra.trim() !== (p.prompt_extra ?? '').trim()
+  const changed = !take || fx !== p.preset || (pick || effect?.model) !== p.model || length !== (p.seconds ?? 5) || extra.trim() !== (p.prompt_extra ?? '').trim()
   const newStory = (p.story ?? '') !== story
+  const cut = fx === CUT
   return (
     <div className="take-edit">
       <label className="next-effect">
         <span>Effect</span>
         <select value={fx} disabled={busy} onChange={(e) => setFx(e.target.value)}>
+          {take && <option value={CUT}>Cut (no transition)</option>}
           {effects.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
       </label>
+      {cut ? <p className="take-edit-note">The two shots meet with a hard cut. This take stays in your gallery.</p> : <>
       <ModelSelect value={pick} onChange={setPick} effectModel={effect?.model} disabled={busy} />
       <div className="take-edit-len">
         <span>Length</span>
@@ -319,16 +325,17 @@ function TakeEditor({ take, effects, story, busy, onMake, onClose }: {
       {p.prompt_override && (
         <p className="take-edit-note">This take was made from a hand-written prompt; the new one uses the effect and direction above.</p>
       )}
+      </>}
       <div className="next-actions">
         <button className="btn btn-primary btn-sm" disabled={busy || !fx}
           onClick={async () => {
             if (await onMake({ preset: fx, model: pick, seconds: length, prompt_extra: extra.trim(), seed: seed ? Number(seed) : undefined })) onClose()
           }}>
-          {busy ? 'Starting…' : changed ? 'Make this take' : 'New take, same direction'}
+          {busy ? 'Starting…' : cut ? 'Make it a cut' : !take ? 'Make this transition' : changed ? 'Make this take' : 'New take, same direction'}
         </button>
         <button className="btn btn-outline btn-sm" disabled={busy} onClick={onClose}>Cancel</button>
         <span className="add-next-note">
-          {newStory ? 'It uses the sequence’s current story. ' : ''}Only this transition renders; the others are kept.
+          {cut ? 'Nothing renders: the video joins again.' : <>{newStory ? 'It uses the sequence’s current story. ' : ''}Only this transition renders; the others are kept.</>}
         </span>
       </div>
     </div>
@@ -361,17 +368,15 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
     order.splice(to, 0, x)
     return { ...d, order }
   })
-  const fallback = (k: number) => {  // a new hand-off starts with the effect of the take that sat there (or the last)
-    const t = takes[Math.min(k, takes.length - 1)]
-    const e = effects.find((x) => x.id === t?.params.preset) ?? effects[0]
-    return { preset: e?.id ?? '', extra: '' }
-  }
+  // a new hand-off starts as a cut: moving shots never renders by itself; pick an effect to render one
+  const fallback = (_k: number) => ({ preset: CUT, extra: '' })
   const links = b.order.slice(0, -1).map((a, k) => {
     const key = `${a}-${b.order[k + 1]}`
     const keep = kept.get(key)
     return { k, key, keep, take: keep === undefined ? undefined : takes[keep], spec: b.fx[key] ?? fallback(k) }
   })
   const fresh = links.filter((l) => l.keep === undefined)
+  const renders = fresh.filter((l) => l.spec.preset !== CUT)
   const reordered = b.order.join() !== seq.shots.map((_, i) => i).join()
   const storyChanged = b.story.trim() !== story
   const dirty = reordered || storyChanged
@@ -380,8 +385,8 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
   const apply = async () => {
     const ok = await onApply({
       order: b.order.map((i) => i + 1),
-      transitions: Object.fromEntries(fresh.map((l) => [String(l.k + 1),
-        { preset: l.spec.preset, model: l.spec.model || undefined, seconds: lenOf(l.spec.preset, l.spec.model), prompt_extra: l.spec.extra.trim() }])),
+      transitions: Object.fromEntries(fresh.map((l) => [String(l.k + 1), l.spec.preset === CUT ? { preset: CUT }
+        : { preset: l.spec.preset, model: l.spec.model || undefined, seconds: lenOf(l.spec.preset, l.spec.model), prompt_extra: l.spec.extra.trim() }])),
       story: b.story.trim(),
       expected_updated_at: b.at,
     })
@@ -389,9 +394,9 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
   }
   const summary = !reordered
     ? 'Saves the story; nothing renders. Transitions you make from now on use it.'
-    : fresh.length
-      ? `${fresh.length} new transition${fresh.length > 1 ? 's' : ''} will render, ${links.length - fresh.length} kept.`
-      : 'Nothing renders: every transition is kept and the video joins again.'
+    : renders.length
+      ? `${renders.length} new transition${renders.length > 1 ? 's' : ''} will render, ${links.length - fresh.length} kept${fresh.length > renders.length ? `, ${fresh.length - renders.length} cut` : ''}.`
+      : 'Nothing renders: the video joins again.'
   return (
     <section className="board" aria-label="Storyboard">
       <label className="board-story">
@@ -432,22 +437,25 @@ function Storyboard({ seq, takes, effects, busy, onApply }: {
               {link && (
                 link.keep !== undefined ? (
                   <span className="board-link" title="Kept: this transition is reused">
-                    <span className="board-link-name">{effects.find((e) => e.id === link.take?.params.preset)?.name ?? 'Kept'}</span>
+                    <span className="board-link-name">{seq.segments[link.keep] === null ? 'Cut' : effects.find((e) => e.id === link.take?.params.preset)?.name ?? 'Kept'}</span>
                     <span className="board-link-state">kept</span>
                   </span>
                 ) : (
                   <span className="board-link is-new">
                     <select aria-label={`Effect into shot ${pos + 2}`} value={link.spec.preset} disabled={busy}
                       onChange={(e) => edit((d) => ({ ...d, fx: { ...d.fx, [link.key]: { ...link.spec, preset: e.target.value } } }))}>
+                      <option value={CUT}>Cut (no transition)</option>
                       {effects.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                     </select>
+                    {link.spec.preset !== CUT && <>
                     <ModelSelect compact label={`Model into shot ${pos + 2}`} value={link.spec.model ?? ''} disabled={busy}
                       effectModel={effects.find((e) => e.id === link.spec.preset)?.model}
                       onChange={(id) => edit((d) => ({ ...d, fx: { ...d.fx, [link.key]: { ...link.spec, model: id } } }))} />
                     <input aria-label={`What happens from shot ${pos + 1} to shot ${pos + 2}`} placeholder="Direction (optional)"
                       maxLength={600} value={link.spec.extra} disabled={busy}
                       onChange={(e) => edit((d) => ({ ...d, fx: { ...d.fx, [link.key]: { ...link.spec, extra: e.target.value } } }))} />
-                    <span className="board-link-state">new · renders</span>
+                    </>}
+                    <span className="board-link-state">{link.spec.preset === CUT ? 'new · cut' : 'new · renders'}</span>
                   </span>
                 )
               )}
@@ -953,7 +961,7 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
           <ol className="cards cards-seq">
             {seqs.map((q) => {
               const done = q.status === 'succeeded' && !!q.output_url
-              const effects = q.segments.map((id) => newer(jobs.find((j) => j.id === id), q.takes?.find((t) => t?.id === id)))
+              const effects = q.segments.map((id) => (id === null ? null : newer(jobs.find((j) => j.id === id), q.takes?.find((t) => t?.id === id))))
               return (
                 <li key={q.id} className={`card is-${q.status}`}>
                   <button className="card-media" onClick={() => onOpenSeq(q)} aria-label={`Open sequence of ${q.shots.length} shots`}>
@@ -975,7 +983,7 @@ function History({ jobs, seqs, focusId, presets, onOpen, onOpenSeq, onRetry }: H
                       <span>Sequence · {q.shots.length} shots</span>
                       <time dateTime={new Date(q.created_at * 1000).toISOString()}>{DATE.format(q.created_at * 1000)}</time>
                     </div>
-                    <p className="card-caption">{effects.map((t) => (t ? (preset(t.params.preset)?.name ?? t.params.preset) : '…')).join(' → ')}</p>
+                    <p className="card-caption">{effects.map((t) => (t === null ? 'Cut' : t ? (preset(t.params.preset)?.name ?? t.params.preset) : '…')).join(' → ')}</p>
                     <div className="card-actions">
                       <button className="btn btn-quiet" onClick={() => onOpenSeq(q)}>Open</button>
                       {done && (
@@ -1273,7 +1281,7 @@ function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemo
             <li className="handoff">
               <button aria-pressed={sel === i} onClick={() => onSelect(i)} title="Edit this transition with the Effect node">
                 <span className="chip">{name(segs[i].preset)}</span>
-                <span>{segs[i].seconds} s</span>
+                <span>{segs[i].preset === CUT ? 'no transition' : `${segs[i].seconds} s`}</span>
               </button>
             </li>
           )}
@@ -1296,7 +1304,7 @@ function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemo
           <button onClick={() => input.current?.click()} disabled={busy}>
             <Icon name="plus" />
             <span>{busy ? 'Uploading…' : shots.length ? 'Add a shot' : 'Add your shots'}</span>
-            <span className="slot-hint">Images, 1–6 s clips or .glb · up to {SEQ_MAX}</span>
+            <span className="slot-hint">Images, clips or .glb · up to {SEQ_MAX} · {CLIP_HINT}</span>
           </button>
           <input
             ref={input}
@@ -1345,17 +1353,19 @@ function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemo
   )
 }
 
-function seqStatusText(seq: Sequence, takes: (Job | undefined)[]): string {
+function seqStatusText(seq: Sequence, all: (Job | undefined)[]): string {
+  const takes = all.filter((_, i) => seq.segments[i] !== null)  // a cut has no take
   const done = takes.filter((t) => t?.status === 'succeeded').length
   switch (seq.status) {
     case 'running': {
       const cur = takes.find((t) => t?.status === 'running')
+      if (!takes.length) return 'Joining the shots'
       return cur ? `Take ${takes.indexOf(cur) + 1} of ${takes.length} · ${statusText(cur)}` : `${done} of ${takes.length} takes ready · waiting for the GPU`
     }
     case 'assembling':
       return 'Joining the takes'
     case 'succeeded':
-      return `${seq.shots.length} shots · ${takes.length} transitions`
+      return `${seq.shots.length} shots · ${takes.length} transition${takes.length === 1 ? '' : 's'}${takes.length < all.length ? ` · ${all.length - takes.length} cut${all.length - takes.length === 1 ? '' : 's'}` : ''}`
     case 'failed':
       return 'Failed'
     case 'cancelled':
@@ -1427,6 +1437,7 @@ export default function App() {
   )
   const [shots, setShots] = useState<Upload[]>([])
   const [segs, setSegs] = useState<Seg[]>([])
+  const made = segs.filter((g) => g.preset !== CUT).length // hand-offs that render; the rest are cuts
   const [rough, setRough] = useState<string | null>(null)
   const [roughBusy, setRoughBusy] = useState(false)
   const [sel, setSel] = useState(0)
@@ -1484,14 +1495,14 @@ export default function App() {
   const running = jobs.some((j) => ACTIVE.has(j.status))
   const focusActive = !!focus && ACTIVE.has(focus.status)
   const focusDone = focus?.status === 'succeeded' && !!focus.output_url
-  const effectLabel = preset === SURPRISE ? 'Surprise me' : (current?.name ?? 'Pick an effect')
+  const effectLabel = preset === SURPRISE ? 'Surprise me' : preset === CUT ? 'Cut' : (current?.name ?? 'Pick an effect')
   const lengthsOf = (p?: Preset) => allowedLengths(p, modelPick, models)
   const fxOptions = useMemo(() => presets.map((p) => ({ id: p.id, name: p.name, seconds: p.seconds ?? [5], model: p.model })), [presets])
   // every length any effect offers; the picked effect (or, for Surprise me, at least one effect) must offer it
   const lengths = useMemo(() => Array.from(new Set(presets.flatMap(lengthsOf))).sort((x, y) => x - y), [presets, modelPick, models]) // eslint-disable-line react-hooks/exhaustive-deps
   const offers = (s: number) => (preset === SURPRISE ? presets.some((p) => lengthsOf(p).includes(s)) : lengthsOf(current).includes(s))
   useEffect(() => {
-    if (presets.length && !offers(seconds)) setSeconds(preset === SURPRISE ? 5 : lengthsOf(current)[0])
+    if (presets.length && preset !== CUT && !offers(seconds)) setSeconds(preset === SURPRISE ? 5 : lengthsOf(current)[0])
   }, [preset, presets, modelPick, models]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [modelsOpen, setModelsOpen] = useState(false)
@@ -1514,6 +1525,7 @@ export default function App() {
   }, [health?.backend, modelsAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (mode !== 'seq' && preset === CUT) setPreset(NO_EFFECT) // a cut only exists between a sequence's shots
     if (mode !== 'seq' || !segs[sel]) return
     setModelPick(segs[sel].model ?? '')
     setPreset(segs[sel].preset)
@@ -1715,6 +1727,16 @@ export default function App() {
     }
   }
 
+  /** A hand-off's effect, kept order: a cut gets a transition (it renders), a transition becomes a cut (nothing renders),
+   *  otherwise a new take of it. */
+  const changeHandoff = (seq: Sequence, i: number, body: Remake): Promise<boolean> =>
+    body.preset !== CUT && seq.segments[i] !== null ? remakeSegment(seq, i, body) : editSequence(seq, {
+      order: seq.shots.map((_, k) => k + 1),
+      transitions: { [String(i + 1)]: body.preset === CUT ? { preset: CUT }
+        : { preset: body.preset, model: body.model || undefined, seconds: body.seconds, prompt_extra: body.prompt_extra, seed: body.seed } },
+      expected_updated_at: seq.updated_at,
+    })
+
   /** Storyboard Apply: remove / reorder shots and save the story; only new hand-offs render. */
   const editSequence = async (seq: Sequence, body: EditIn): Promise<boolean> => {
     if (seqEditLock.current) return false
@@ -1748,7 +1770,7 @@ export default function App() {
       const allowed = allowedLengths(presets.find((p) => p.id === chosen), pick, models)
       const body = {
         shot: up.clip && up.first && up.last ? { clip: up.clip, first: up.first, last: up.last } : { image: up.id },
-        segment: {
+        segment: chosen === CUT ? { preset: CUT } : {
           preset: chosen,
           model: pick || undefined,
           seconds: allowed.includes(seconds) ? seconds : allowed[0],
@@ -1949,7 +1971,7 @@ export default function App() {
             {modeTabs}
             {mode === 'seq' ? (
               <ShotList shots={shots} segs={segs} sel={sel} busy={seqBusy > 0}
-                name={(id) => (id === SURPRISE ? 'Surprise me' : presetName(id))}
+                name={(id) => (id === SURPRISE ? 'Surprise me' : id === CUT ? 'Cut' : presetName(id))}
                 onAdd={addShots} takes={jobs.filter((j) => j.status === 'succeeded').slice(0, 20)} onImport={importTake} onRemove={removeShot} onMove={moveShot} onSelect={setSel} />
             ) : (<>
             <div className="slots">
@@ -2001,7 +2023,7 @@ export default function App() {
             </>)}
           </Node>
           <Node wire="effect" title={mode === 'seq' && segs.length ? `Effect · ${sel + 1} → ${sel + 2}` : 'Effect'} socket="effect"
-            meta={`${effectLabel} · ${seconds} s`} className="effects-node">
+            meta={preset === CUT ? 'Cut · no transition' : `${effectLabel} · ${seconds} s`} className="effects-node">
             {mode === 'seq' && segs.length > 1 && (
               <button className="apply-all" onClick={() => setSegs((prev) => prev.map((g) => ({ ...g, preset, seconds, model: modelPick, extra: g.extra.trim() || extra })))}>
                 Use {effectLabel}{extra.trim() ? " and this description" : ""} on all {segs.length} transitions
@@ -2017,6 +2039,16 @@ export default function App() {
               </div>
             )}
             <div className="effects" role="listbox" aria-label="Effects">
+              {mode === 'seq' && (
+                <button role="option" aria-selected={preset === CUT} className="effect effect-surprise" onClick={() => setPreset(CUT)}
+                  title="No transition: the two shots meet with a hard cut. Nothing renders for it.">
+                  <span className="effect-art">
+                    <Icon name="cut" />
+                  </span>
+                  <span className="effect-name">Cut</span>
+                  <span className="effect-meta">No transition</span>
+                </button>
+              )}
               {presets.length > 1 && (
                 <button role="option" aria-selected={preset === SURPRISE} className="effect effect-surprise" onClick={() => setPreset(SURPRISE)}>
                   <span className="effect-art">
@@ -2051,7 +2083,7 @@ export default function App() {
                 </button>
               ))}
             </div>
-            {lengths.length > 1 && (
+            {preset !== CUT && lengths.length > 1 && (
               <div className="length">
                 <span className="length-label">Length</span>
                 <div className="seg seg-sm" role="radiogroup" aria-label="Take length">
@@ -2071,7 +2103,7 @@ export default function App() {
                 </div>
               </div>
             )}
-            <ModelSelect value={modelPick} onChange={setModelPick} effectModel={preset === SURPRISE ? undefined : current?.model} />
+            {preset !== CUT && <ModelSelect value={modelPick} onChange={setModelPick} effectModel={preset === SURPRISE ? undefined : current?.model} />}
           </Node>
           <Node wire="direction" title="Direction" socket="text" meta="Optional" className="direction">
             {mode === 'seq' && (
@@ -2081,7 +2113,7 @@ export default function App() {
                   onChange={(e) => setStory(e.target.value)} />
               </label>
             )}
-            <details className="more" open={preset === NO_EFFECT || undefined}>
+            {preset !== CUT && <details className="more" open={preset === NO_EFFECT || undefined}>
               <summary>{preset === NO_EFFECT ? 'Describe the motion' : 'Describe the moment, set a seed'}</summary>
               <label>
                 <span>{preset === NO_EFFECT ? 'The camera and the scene, from the first shot to the last (needed with No effect)' : 'What happens during the change'} <Count n={extra.length} max={600} /></span>
@@ -2091,13 +2123,13 @@ export default function App() {
                 <span>Seed</span>
                 <input value={seed} inputMode="numeric" placeholder="Random" onChange={(e) => setSeed(e.target.value.replace(/\D/g, ''))} />
               </label>
-            </details>
+            </details>}
           </Node>
           </div>
           <div className="make">
             <button data-wire="make" className="btn btn-primary btn-make"
               disabled={!health || (mode === 'seq' ? shots.length < 2 || seqBusy > 0 : !a || !b)} onClick={make}>
-              {mode === 'seq' ? `Make sequence${segs.length ? ` · ${segs.length} transition${segs.length > 1 ? 's' : ''}` : ''}` : running ? 'Add to queue' : 'Make transition'}
+              {mode === 'seq' ? `Make sequence${segs.length ? (made ? ` · ${made} transition${made > 1 ? 's' : ''}` : ' · cuts only') : ''}` : running ? 'Add to queue' : 'Make transition'}
             </button>
             {mode === 'seq' && shots.length >= 2 && (
               <button className="btn" disabled={roughBusy || seqBusy > 0 || segs.some((g) => !g.preset)} onClick={makeRoughCut}>
@@ -2111,6 +2143,8 @@ export default function App() {
                   ? 'Add at least two shots, in the order they play.'
                   : segs.findIndex((g) => g.preset === NO_EFFECT && !g.extra.trim()) >= 0
                   ? `Transition ${segs.findIndex((g) => g.preset === NO_EFFECT && !g.extra.trim()) + 1} has No effect: describe its motion under "Describe the motion".`
+                  : !made
+                    ? 'Only cuts: Seam joins your shots, nothing renders · no credits'
                   : onCloud
                     ? 'Each transition renders on Comfy Cloud, then Seam joins them · uses your credits'
                     : 'Each transition renders on your GPU, then Seam joins them · no credits'
@@ -2160,7 +2194,7 @@ export default function App() {
               {fseqActive && (
                 <div className="progress" aria-live="polite">
                   <span className="progress-status">{seqStatusText(fseq, fseqTakes)}</span>
-                  <span className="bar" style={{ ['--p' as string]: (fseqTakes.reduce((n, t) => n + (t?.status === 'succeeded' ? 1 : (t?.progress ?? 0)), 0)) / Math.max(1, fseqTakes.length) }} />
+                  <span className="bar" style={{ ['--p' as string]: (fseqTakes.reduce((n, t, i) => n + (fseq.segments[i] === null || t?.status === 'succeeded' ? 1 : (t?.progress ?? 0)), 0)) / Math.max(1, fseqTakes.length) }} />
                   <button className="btn btn-quiet btn-sm" onClick={() => api.cancelSequence(fseq.id)}>
                     Cancel
                   </button>
@@ -2170,7 +2204,7 @@ export default function App() {
                 <div className="progress is-error" role="alert">
                   <span className="progress-status">{seqStatusText(fseq, fseqTakes)}</span>
                   {fseq.error && <span className="progress-error">{fseq.error}</span>}
-                  {fseqTakes.every((t) => t?.status === 'succeeded') && (
+                  {fseqTakes.every((t, i) => fseq.segments[i] === null || t?.status === 'succeeded') && (
                     <button className="btn btn-quiet btn-sm" onClick={() => api.assembleSequence(fseq.id).catch((e) => setError(e.message))}>
                       Join again
                     </button>
@@ -2181,7 +2215,26 @@ export default function App() {
             <Storyboard key={`board-${fseq.id}`} seq={fseq} takes={fseqTakes} effects={fxOptions} busy={seqEditing}
               onApply={(body) => editSequence(fseq, body)} />
             <ol className="seq-takes" aria-label="Transitions in this sequence">
-              {fseqTakes.map((t, i) => (
+              {fseqTakes.map((t, i) => fseq.segments[i] === null ? (
+                <li key={`cut-${i}`} className={`seq-take is-cut${editingTake === i ? ' is-editing' : ''}`}>
+                  <span className="seq-take-media"><Icon name="cut" /></span>
+                  <span className="seq-take-text">
+                    <span className="seq-take-title">{i + 1} → {i + 2} · Cut</span>
+                    <span className="seq-take-status">No transition: the shots meet with a hard cut</span>
+                  </span>
+                  <span className="seq-take-actions">
+                    <button className="btn btn-quiet btn-sm" disabled={fseqActive} aria-expanded={editingTake === i}
+                      title={fseqActive ? 'Wait until the sequence settles' : 'Generate a transition here instead of the cut'}
+                      onClick={() => setEditingTake(editingTake === i ? null : i)}>
+                      <Icon name="plus" /> Add a transition
+                    </button>
+                  </span>
+                  {editingTake === i && (
+                    <TakeEditor key={`cut-${i}`} take={null} effects={fxOptions} story={fseq.story ?? ''} busy={seqEditing}
+                      onMake={(body) => changeHandoff(fseq, i, body)} onClose={() => setEditingTake(null)} />
+                  )}
+                </li>
+              ) : (
                 <li key={t?.id ?? i} className={`seq-take is-${t?.status ?? 'missing'}${editingTake === i ? ' is-editing' : ''}`}>
                   <span className="seq-take-media">
                     {t?.poster_url ? <img src={t.poster_url} alt="" /> : <span className="bar" style={{ ['--p' as string]: t?.progress ?? 0 }} />}
@@ -2210,7 +2263,7 @@ export default function App() {
                   </span>
                   {editingTake === i && t && (
                     <TakeEditor key={t.id} take={t} effects={fxOptions} story={fseq.story ?? ''} busy={seqEditing}
-                      onMake={(body) => remakeSegment(fseq, i, body)} onClose={() => setEditingTake(null)} />
+                      onMake={(body) => changeHandoff(fseq, i, body)} onClose={() => setEditingTake(null)} />
                   )}
                 </li>
               ))}

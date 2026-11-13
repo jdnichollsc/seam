@@ -44,8 +44,8 @@ class SequenceRecord:
     """Shots S0..Sn joined by n transition jobs (segment i: last frame of Si → first frame of Si+1)."""
     id: str
     status: str
-    shots: list[dict[str, Any]]  # {first, last, clip}: an image has first == last and no clip
-    segments: list[str]          # current job id per segment; a re-roll swaps the pointer
+    shots: list[dict[str, Any]]  # {first, last, clip, hold?}: an image has first == last and no clip
+    segments: list[str | None]   # current job id per segment (None: a cut); a re-roll swaps the pointer
     width: int                   # one canvas for every segment, from S0
     height: int
     created_at: float
@@ -175,7 +175,7 @@ class JobStore:
                              (seq.id, json.dumps(seq.public()), seq.created_at))
             self._db.commit()
 
-    def create_sequence(self, shots: list[dict[str, Any]], segments: list[str], width: int,
+    def create_sequence(self, shots: list[dict[str, Any]], segments: list[str | None], width: int,
                         height: int, story: str = "") -> SequenceRecord:
         now = time.time()
         seq = SequenceRecord(id="s" + uuid.uuid4().hex[:11], status="running", shots=shots, segments=segments,

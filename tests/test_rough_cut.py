@@ -38,7 +38,7 @@ def test_durations_add_up_and_no_job_is_made(seam) -> None:
 def test_a_clip_plays_in_full(seam, tmp_path: Path) -> None:
     e, shots = seam
     clip = tmp_path / "clip.mp4"
-    media._still(Path(shots[0]["first"]), clip, 2.0)
+    media.still(Path(shots[0]["first"]), clip, 2.0)
     shots = [{**shots[0], "clip": str(clip)}, shots[1]]
     out = e.rough_cut(shots, [{"preset": "smoke", "seconds": 5}])
     assert media.probe(out).duration == pytest.approx(2.0 + 0.8 + 1.5, abs=0.1)

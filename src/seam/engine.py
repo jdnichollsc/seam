@@ -32,6 +32,9 @@ SUBMIT_UNKNOWN = ("server restarted while sending the job to ComfyUI; it may sti
                   "(check ComfyUI's queue/output). Use New take to render it again.")
 SECONDS_CHOICES = (5, 8, 10)  # what the graphs render; each launch effect lists the lengths it is qualified at
 SEQUENCE_SHOTS = (2, 8)
+CUT = "cut"  # a hand-off that generates nothing: the two shots meet with a hard cut; its segment is None
+DEFAULT_HOLD = 2.0  # seconds an image shows when a cut is next to it (between transitions it shows through them)
+HOLD_SECONDS = (0.5, 10.0)
 CLOUD_GRACE_S = 30.0
 SEQ = "seq:"  # worker queue items for sequences (reconcile/join), next to plain job ids
 SHOT = "shot:"  # and for shot generations: one queue, so the GPU is never shared
@@ -206,6 +209,10 @@ class Engine:
         for p in (req.image_a, req.image_b, req.clip_a, req.clip_b):
             if p and not Path(p).is_file():
                 raise ValueError(f"file not found: {Path(p).name}")
+        for p in (req.clip_a, req.clip_b):  # every take passes here: no transition is made next to a long clip
+            if p and not media.CLIP_SECONDS[0] <= (sec := media.probe(Path(p)).duration) <= media.CLIP_SECONDS[1] + 0.05:
+                lo, hi = media.CLIP_SECONDS
+                raise ValueError(f"a clip next to a transition must be {lo:g}-{hi:g} s (this one is {sec:.1f} s)")
         if (req.width is None) != (req.height is None) or any(
                 v is not None and not (256 <= v <= 2048 and v % 32 == 0) for v in (req.width, req.height)):
             raise ValueError("width and height go together: multiples of 32 between 256 and 2048")
@@ -244,9 +251,16 @@ class Engine:
             raise KeyError(seq_id)
         if seq.status in ("running", "assembling"):
             raise SequenceBusy(f"sequence {seq_id} is {seq.status}; re-roll a segment once it settles")
+        self._take_at(seq, index)
+        return self.preview_refine(seq.segments[index], self._segment_changes(seq, changes))
+
+    @staticmethod
+    def _take_at(seq: SequenceRecord, index: int) -> str:
         if not 0 <= index < len(seq.segments):
             raise ValueError(f"segment must be 1-{len(seq.segments)}")
-        return self.preview_refine(seq.segments[index], self._segment_changes(seq, changes))
+        if seq.segments[index] is None:
+            raise ValueError(f"transition {index + 1} is a cut: give it an effect by editing the sequence")
+        return seq.segments[index]
 
     def _refined(self, job_id: str, changes: dict[str, Any]) -> TransitionRequest:
         base = self.store.get(job_id)
@@ -295,12 +309,17 @@ class Engine:
         lo, hi = SEQUENCE_SHOTS
         if not lo <= len(shots) <= hi or len(segments) != len(shots) - 1:
             raise ValueError(f"a sequence has {lo}-{hi} shots and one transition per hand-off")
-        labels = []
+        labels: list[str | None] = []
         for i, seg in enumerate(segments):
+            if self._is_cut(seg):
+                labels.append(None)
+                continue
             preset = self.presets.get(seg.get("preset") or "")
             if seg.get("preset") and preset is None:
                 raise ValueError(f"transition {i + 1}: unknown effect {seg['preset']!r}")
             labels.append(f"{preset.name if preset else 'Surprise me'} · {seg.get('seconds', 5)} s")
+        cuts = [label is None for label in labels]
+        shots = [{**s, "hold": self._hold(s, i, cuts) or s.get("hold")} for i, s in enumerate(shots)]
         folder = self.settings.outputs_dir / "rough"
         folder.mkdir(parents=True, exist_ok=True)
         key = json.dumps([shots, labels], sort_keys=True)
@@ -330,8 +349,13 @@ class Engine:
                 if shot.get(key) and not Path(shot[key]).is_file():
                     raise ValueError(f"file not found: {Path(shot[key]).name}")
         width, height = media.output_size(*media.image_size(Path(shots[0]["last"])))
-        reqs = []
+        cuts = [self._is_cut(seg) for seg in segments]
+        self._check_shots(shots, cuts)
+        reqs: list[TransitionRequest | None] = []
         for i, seg in enumerate(segments):
+            if cuts[i]:
+                reqs.append(None)
+                continue
             fields = {k: v for k, v in seg.items()
                       if k not in ("image_a", "image_b", "clip_a", "clip_b", "width", "height", "story")}
             req = TransitionRequest(**{**fields, "image_a": shots[i]["last"], "image_b": shots[i + 1]["first"],
@@ -342,14 +366,58 @@ class Engine:
                 raise ValueError(f"segment {i + 1}: {e}") from e
             reqs.append(req)
         with self._seq_lock:
-            jobs = [self.submit(r, enqueue=False) for r in reqs]
-            seq = self.store.create_sequence([{"first": s["first"], "last": s["last"], "clip": s.get("clip")}
-                                              for s in shots], [j.id for j in jobs], width, height, story.strip())
+            jobs = [self.submit(r, enqueue=False) if r else None for r in reqs]
+            seq = self.store.create_sequence([self._shot_record(s) for s in shots],
+                                             [j.id if j else None for j in jobs], width, height, story.strip())
             for i, j in enumerate(jobs):
-                self.store.update(j.id, extra={**j.extra, "sequence_id": seq.id, "segment": i})
+                if j:
+                    self.store.update(j.id, extra={**j.extra, "sequence_id": seq.id, "segment": i})
         for j in jobs:
-            self._queue.put(j.id)
+            if j:
+                self._queue.put(j.id)
+        if not any(jobs):  # only cuts: nothing renders, the video joins at once
+            self._queue.put(SEQ + seq.id)
         return seq
+
+    @staticmethod
+    def _is_cut(segment: dict[str, Any]) -> bool:
+        return (segment.get("preset") or "") == CUT
+
+    @staticmethod
+    def _shot_record(shot: dict[str, Any]) -> dict[str, Any]:
+        rec = {"first": shot["first"], "last": shot["last"], "clip": shot.get("clip")}
+        if shot.get("hold") is not None:
+            rec["hold"] = float(shot["hold"])
+        return rec
+
+    @staticmethod
+    def _hold(shot: dict[str, Any], i: int, cuts: list[bool]) -> float:
+        """Seconds image shot i shows on its own: only next to a cut (between transitions it shows through them,
+        as before cuts existed). A clip always plays whole."""
+        if shot.get("clip") or not ((i > 0 and cuts[i - 1]) or (i < len(cuts) and cuts[i])):
+            return 0.0
+        return float(shot.get("hold") or DEFAULT_HOLD)
+
+    @staticmethod
+    def _check_shots(shots: list[dict[str, Any]], cuts: list[bool]) -> None:
+        """Limits that depend on the neighbours: a clip next to a generated transition is short (a product rule: the
+        models only ever see its first or last frame); a clip between cuts only plays, so it may be long."""
+        for i, shot in enumerate(shots):
+            hold = shot.get("hold")
+            if hold is not None and not HOLD_SECONDS[0] <= float(hold) <= HOLD_SECONDS[1]:
+                raise ValueError(f"shot {i + 1}: an image shows for {HOLD_SECONDS[0]:g}-{HOLD_SECONDS[1]:g} s")
+            if not shot.get("clip") or not Path(shot["clip"]).is_file():
+                continue
+            sides = ([cuts[i - 1]] if i > 0 else []) + ([cuts[i]] if i < len(cuts) else [])
+            sec = media.probe(Path(shot["clip"])).duration
+            if all(sides):
+                lo, hi = media.LONG_CLIP_SECONDS
+                if not lo <= sec <= hi + 0.05:
+                    raise ValueError(f"shot {i + 1}: a clip between cuts is {lo:g}-{hi:g} s (this one is {sec:.1f} s)")
+            elif not media.CLIP_SECONDS[0] <= sec <= media.CLIP_SECONDS[1] + 0.05:
+                lo, hi = media.CLIP_SECONDS
+                raise ValueError(f"shot {i + 1}: a clip next to a transition is {lo:g}-{hi:g} s (this one is "
+                                 f"{sec:.1f} s); make its hand-offs cuts to use it whole")
 
     @staticmethod
     def _segment_changes(seq: SequenceRecord, changes: dict[str, Any]) -> dict[str, Any]:
@@ -368,9 +436,7 @@ class Engine:
                 raise SequenceBusy(f"sequence {seq_id} is {seq.status}; re-roll a segment once it settles")
             if expected_updated_at is not None and abs(seq.updated_at - expected_updated_at) > 1e-6:
                 raise SequenceBusy("this sequence changed after that was offered; ask again")
-            if not 0 <= index < len(seq.segments):
-                raise ValueError(f"segment must be 1-{len(seq.segments)}")
-            job = self.refine(seq.segments[index], self._segment_changes(seq, changes), extra={"sequence_id": seq.id, "segment": index},
+            job = self.refine(self._take_at(seq, index), self._segment_changes(seq, changes), extra={"sequence_id": seq.id, "segment": index},
                               enqueue=False, expected_backend=expected_backend)
             segments = list(seq.segments)
             segments[index] = job.id
@@ -386,7 +452,7 @@ class Engine:
             if seq is None or seq.deleted_at:
                 raise KeyError(seq_id)
             job = self._append_locked(seq, shot, segment)
-        self._queue.put(job.id)
+        self._queue.put(job.id if job else SEQ + seq_id)  # a cut renders nothing: just join again
         return self.store.get_sequence(seq_id)
 
     def continue_take(self, job_id: str, shot: dict[str, Any], segment: dict[str, Any],
@@ -418,7 +484,8 @@ class Engine:
                     raise ValueError(f"file not found: {Path(s_[key]).name}")
         # some models size their own output (720p): the canvas of what follows stays on the grid the graphs need
         width, height = info.width - info.width % 32, info.height - info.height % 32
-        self.validate(self._next_request(shots[-1]["last"], shot, segment, width, height))
+        if not self._is_cut(segment):  # a cut generates nothing: _append_locked checks its shots
+            self.validate(self._next_request(shots[-1]["last"], shot, segment, width, height))
         with self._seq_lock:
             if self.store.get(job_id).deleted_at:  # trashed while the files above were being read
                 raise ValueError(f"take {job_id} is in the trash; restore it first")
@@ -429,11 +496,11 @@ class Engine:
             except Exception:
                 self.store.update_sequence(seq.id, status="cancelled", error="could not add the next shot")
                 raise
-        self._queue.put(new.id)
+        self._queue.put(new.id if new else SEQ + seq.id)
         return self.store.get_sequence(seq.id)
 
-    def _append_locked(self, seq: SequenceRecord, shot: dict[str, Any], segment: dict[str, Any]) -> JobRecord:
-        """Caller holds _seq_lock. Validates everything before anything is written; queues nothing."""
+    def _append_locked(self, seq: SequenceRecord, shot: dict[str, Any], segment: dict[str, Any]) -> JobRecord | None:
+        """Caller holds _seq_lock. Validates everything before anything is written; queues nothing. A cut returns None."""
         if seq.status != "succeeded":
             raise SequenceBusy(f"sequence {seq.id} is {seq.status}; add a shot once it has finished")
         if len(seq.shots) >= SEQUENCE_SHOTS[1]:
@@ -442,10 +509,16 @@ class Engine:
             for key in ("first", "last", "clip"):
                 if s_.get(key) and not Path(s_[key]).is_file():
                     raise ValueError(f"file not found: {Path(s_[key]).name}")
-        jobs = [self.store.get(j) for j in seq.segments]
+        jobs = [self.store.get(j) for j in seq.segments if j]
         if any(j is None or not j.output or not (self.settings.outputs_dir / j.output).is_file() for j in jobs):
             raise ValueError("a take of this sequence is missing on disk; make a new take of it first")
-        prev = jobs[-1]
+        shots = [*seq.shots, self._shot_record(shot)]
+        cut = self._is_cut(segment)
+        self._check_shots(shots, [s is None for s in seq.segments] + [cut])
+        if cut:
+            self.store.update_sequence(seq.id, status="running", error=None, segments=[*seq.segments, None], shots=shots)
+            return None
+        prev = self.store.get(seq.segments[-1]) if seq.segments and seq.segments[-1] else None
         fields = dict(segment)
         start = seq.shots[-1]["last"]
         # the shot we leave from is the one the previous take landed on: keep the user's reading of it
@@ -459,8 +532,7 @@ class Engine:
         job = self.submit(req, extra={"sequence_id": seq.id, "segment": len(seq.segments)}, enqueue=False)
         try:
             self.store.update_sequence(seq.id, status="running", error=None, segments=[*seq.segments, job.id],
-                                       shots=[*seq.shots, {"first": shot["first"], "last": shot["last"],
-                                                           "clip": shot.get("clip")}])
+                                       shots=shots)
         except Exception:
             self.store.update(job.id, status="cancelled", error="could not add it to the sequence")
             raise
@@ -504,10 +576,15 @@ class Engine:
             story = seq.story if story is None else story.strip()
             kept = {(i, i + 1): job_id for i, job_id in enumerate(seq.segments)}
             shots = [self._shot_endpoints(seq, i) for i in order]
-            plan: list[str | TransitionRequest] = []
-            missing: list[str] = []
+            plan: list[str | TransitionRequest | None] = []
             for k in range(len(order) - 1):
                 pair = (order[k], order[k + 1])
+                if k in transitions and self._is_cut(transitions[k]):
+                    plan.append(None)
+                    continue
+                if k not in transitions and pair in kept and kept[pair] is None:
+                    plan.append(None)  # a cut stays a cut
+                    continue
                 if k not in transitions and pair in kept:
                     job = self.store.get(kept[pair])
                     if job is None or job.status != "succeeded" or not job.output \
@@ -517,7 +594,7 @@ class Engine:
                     plan.append(kept[pair])
                     continue
                 if k not in transitions:
-                    missing.append(f"{pair[0] + 1} → {pair[1] + 1}")
+                    plan.append(None)  # a new hand-off with no effect given is a cut: moving shots never renders by itself
                     continue
                 req = self._next_request(shots[k]["last"], shots[k + 1], {**transitions[k], "story": story},
                                          seq.width, seq.height)
@@ -526,20 +603,18 @@ class Engine:
                 except ValueError as e:
                     raise ValueError(f"transition {k + 1} ({pair[0] + 1} → {pair[1] + 1}): {e}") from e
                 plan.append(req)
-            if missing:
-                raise ValueError(f"pick an effect for the new transition{'s' if len(missing) > 1 else ''}: "
-                                 + ", ".join(missing))
+            self._check_shots(shots, [x is None for x in plan])
             for s_ in shots:
                 for key in ("first", "last", "clip"):
                     if s_.get(key) and not Path(s_[key]).is_file():
                         raise ValueError(f"file not found: {Path(s_[key]).name}")
-            segments = list(plan) if all(isinstance(x, str) for x in plan) else None
+            segments = None if any(isinstance(x, TransitionRequest) for x in plan) else list(plan)
             if segments == seq.segments and order == list(range(n)):
                 return self.store.update_sequence(seq_id, story=story) if story != seq.story else seq
             try:
                 segments = []
                 for k, x in enumerate(plan):
-                    if isinstance(x, str):
+                    if not isinstance(x, TransitionRequest):
                         segments.append(x)
                     else:
                         job = self.submit(x, extra={"sequence_id": seq.id, "segment": k}, enqueue=False)
@@ -560,7 +635,7 @@ class Engine:
     def _shot_endpoints(self, seq: SequenceRecord, i: int) -> dict[str, Any]:
         """Shot i with its real first and last frames. Sequences continued from a pair take before 10/29 stored clip
         A's last frame as both; read its first frame now, before an edit lands another transition on it."""
-        shot = {"first": seq.shots[i]["first"], "last": seq.shots[i]["last"], "clip": seq.shots[i].get("clip")}
+        shot = self._shot_record(seq.shots[i])
         if shot["clip"] and shot["first"] == shot["last"] and Path(shot["clip"]).is_file():
             shot["first"] = str(store_upload(self.settings, media.clip_frame(
                 Path(shot["clip"]), self.settings.uploads_dir / f"{seq.id}_{i}_clip_first.png", last=False)))
@@ -575,7 +650,7 @@ class Engine:
                 return seq
             seq = self.store.update_sequence(seq_id, status="cancelled")
             for job_id in seq.segments:
-                job = self.store.get(job_id)
+                job = self.store.get(job_id) if job_id else None  # a cut has nothing to stop
                 if job and job.status in ("queued", "running"):
                     self.cancel(job_id)
         return seq
@@ -598,8 +673,8 @@ class Engine:
             seq = self.store.get_sequence(seq_id)
             if seq is None or seq.deleted_at or seq.status == "cancelled":
                 return
-            jobs = [self.store.get(j) for j in seq.segments]
-            status = [j.status if j else "failed" for j in jobs]
+            jobs = [self.store.get(j) if j else None for j in seq.segments]
+            status = ["succeeded" if j_id is None else j.status if j else "failed" for j_id, j in zip(seq.segments, jobs)]
             if any(s in ("queued", "running") for s in status):
                 return  # still rendering; the next segment to finish reconciles again
             bad = [i for i, s in enumerate(status) if s != "succeeded"]
@@ -608,7 +683,13 @@ class Engine:
                 why = (jobs[i].error if jobs[i] else None) or status[i]
                 self.store.update_sequence(seq_id, status="failed", error=f"segment {i + 1}: {why}"[:600])
                 return
-            key = hashlib.sha256(",".join(seq.segments).encode()).hexdigest()[:8]
+            cuts = [j is None for j in seq.segments]
+            holds = [self._hold(s, i, cuts) for i, s in enumerate(seq.shots)]
+            if any(cuts):  # what is joined, in order: an all-cuts reorder or a new hold gets a new file too
+                ident = json.dumps([[s["first"], s.get("clip"), h] for s, h in zip(seq.shots, holds)] + [seq.segments])
+            else:
+                ident = ",".join(seq.segments)  # sequences without cuts keep the names they already have
+            key = hashlib.sha256(ident.encode()).hexdigest()[:8]
             name = f"{seq.id}_{key}.mp4"  # one file per set of takes: a re-roll gets a new URL
             if seq.output == name and (self.settings.outputs_dir / name).is_file():
                 self.store.update_sequence(seq_id, status="succeeded", error=None)
@@ -618,16 +699,22 @@ class Engine:
         out_dir = self.settings.outputs_dir
         dst = out_dir / name
         try:
-            parts: list[Path] = []
-            for i, shot in enumerate(seq.shots):  # clip0?, take0, clip1?, take1, …, clipN?
-                if shot.get("clip"):
-                    parts.append(Path(shot["clip"]))
-                if i < len(jobs):
-                    parts.append(out_dir / jobs[i].output)
-            fps = max(media.probe(out_dir / j.output).fps for j in jobs)  # the highest: models differ, no take may lose frames
-            media.join(parts, dst, seq.width, seq.height, fps)
+            with tempfile.TemporaryDirectory(dir=out_dir) as work:
+                parts: list[Path] = []
+                for i, shot in enumerate(seq.shots):  # clip0 or hold0?, take0?, clip1 or hold1?, take1?, …
+                    if shot.get("clip"):
+                        parts.append(Path(shot["clip"]))
+                    elif holds[i]:
+                        parts.append(media.still(Path(shot["first"]), Path(work) / f"hold{i}.mp4", holds[i]))
+                    if i < len(jobs) and jobs[i]:
+                        parts.append(out_dir / jobs[i].output)
+                takes = [out_dir / j.output for j in jobs if j]
+                clips = [Path(s["clip"]) for s in seq.shots if s.get("clip")]
+                # the highest: models differ, no take may lose frames; only cuts: the clips' rate, else 24
+                fps = max((media.probe(p).fps for p in takes or clips), default=24.0)
+                media.join(parts, dst, seq.width, seq.height, fps)
             media.poster(dst, out_dir / f"{dst.stem}.jpg")
-            media.contact_sheet(dst, out_dir / f"{dst.stem}_sheet.png", n=6 * len(jobs), height=160, cols=6)
+            media.contact_sheet(dst, out_dir / f"{dst.stem}_sheet.png", n=6 * max(1, len(jobs)), height=160, cols=6)
         except Exception as e:  # noqa: BLE001 — the takes stay; assemble() joins again
             detail = getattr(e, "stderr", None) or e
             print(f"seam: joining sequence {seq_id} failed: {type(e).__name__}: {detail!s}"[:2000], flush=True)
@@ -1081,17 +1168,25 @@ class Engine:
         if seq is None:
             raise KeyError(seq_id)
         parts: list[dict[str, Any]] = []
+        cuts = [j is None for j in seq.segments]
         for i, shot in enumerate(seq.shots):
             if shot.get("clip"):
                 clip = Path(shot["clip"])
                 parts.append({"clip": clip.name, "sha256": hashlib.sha256(clip.read_bytes()).hexdigest()})
-            if i < len(seq.segments):
+            elif hold := self._hold(shot, i, cuts):
+                image = Path(shot["first"])
+                parts.append({"still": image.name, "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
+                              "seconds": hold})
+            if i < len(seq.segments) and seq.segments[i] is None:
+                parts.append({"segment": i + 1, "cut": True})
+            elif i < len(seq.segments):
                 job = self.store.get(seq.segments[i])
                 rec = (receipt.build_receipt(job, self.spec(self.model_for(TransitionRequest(**job.params))),
                                              self.settings.outputs_dir) if job and job.status == "succeeded" else None)
                 parts.append({"segment": i + 1, "job_id": seq.segments[i], "receipt": rec})
         return {"seam_sequence": 1, "id": seq.id, "output": seq.output, "canvas": [seq.width, seq.height],
-                "join": "hard cuts, every frame kept; parts scaled to cover the canvas and centre-cropped",
+                "join": "hard cuts, every frame kept; parts scaled to cover the canvas and centre-cropped; "
+                        "an image next to a cut shows for its seconds",
                 "parts": parts}
 
     def prompt_for(self, req: TransitionRequest) -> str:
@@ -1332,7 +1427,7 @@ class Engine:
 CLIP_FORMAT = b"seam-clip-v1:"  # bump when normalize_clip changes
 
 
-def store_clip(settings: Settings, src: Path) -> tuple[Path, float]:
+def store_clip(settings: Settings, src: Path, limits: tuple[float, float] = media.CLIP_SECONDS) -> tuple[Path, float]:
     """Keep an uploaded clip (content-addressed by the upload's bytes), normalized to one MP4 clock, after checking
     it is a short video ffmpeg can read."""
     import hashlib
@@ -1345,13 +1440,14 @@ def store_clip(settings: Settings, src: Path) -> tuple[Path, float]:
         try:
             media.normalize_clip(src, tmp)
             seconds = media.probe(tmp).duration
-            lo, hi = media.CLIP_SECONDS
-            if not lo <= seconds <= hi:
-                raise ValueError(f"clips must be {lo:g}-{hi:g} s long (this one is {seconds:.1f} s)")
             os.replace(tmp, dst)  # a concurrent identical upload never sees a half-written clip
         finally:
             tmp.unlink(missing_ok=True)
-    return dst, media.probe(dst).duration
+    seconds = media.probe(dst).duration
+    lo, hi = limits
+    if not lo <= seconds <= hi + 0.05:  # checked on reuse too: the same file may have come in with a longer limit
+        raise ValueError(f"clips must be {lo:g}-{hi:g} s long here (this one is {seconds:.1f} s)")
+    return dst, seconds
 
 
 def store_upload(settings: Settings, src: Path, name_hint: str = "upload") -> Path:

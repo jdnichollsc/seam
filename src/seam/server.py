@@ -36,7 +36,7 @@ from .workflows import load_image_models, load_spec
 settings = get_settings()
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 UPLOAD_ID = re.compile(r"^[0-9a-f]{16}\.png$")
-MAX_CLIP_BYTES = 40 * 1024 * 1024
+MAX_CLIP_BYTES = 200 * 1024 * 1024  # up to 60 s between cuts
 CLIP_ID = re.compile(r"^[0-9a-f]{16}\.mp4$")
 SEQ_ID = re.compile(r"^s[0-9a-f]{11}$")
 VIDEO_TYPES = ("video/mp4", "video/quicktime", "video/webm")
@@ -154,10 +154,13 @@ class ShotIn(BaseModel):
     first: str | None = Field(default=None, description="clip's first-frame upload id (role=mid)")
     last: str | None = Field(default=None, description="clip's last-frame upload id (role=mid)")
     clip: str | None = Field(default=None, description="clip id: plays in full at this point of the sequence")
+    hold: float | None = Field(default=None, ge=0.5, le=10, description="an image next to a cut: seconds it shows "
+                               "(default 2); between two transitions it shows through them")
 
 
 class SegmentIn(BaseModel):
-    """The transition from one shot to the next: same fields as a transition, minus the shots."""
+    """The transition from one shot to the next: same fields as a transition, minus the shots. preset "cut": nothing
+    is generated, the two shots meet with a hard cut."""
     preset: str
     model: str | None = Field(default=None, description="id from GET /api/models; omit or '': the effect's own model")
     seconds: int = 5
@@ -187,8 +190,8 @@ class EditIn(BaseModel):
     order: list[int] = Field(min_length=2, max_length=8, description="current shot numbers in their new order; "
                              "leave one out to remove it")
     transitions: dict[int, SegmentIn] = Field(default_factory=dict, description="transition number in the NEW order "
-                                              "→ its effect; required for every hand-off whose shots were not already "
-                                              "adjacent in that direction, optional (a new take) for the others")
+                                              "→ its effect, or preset 'cut'; a hand-off whose shots were not already "
+                                              "adjacent in that direction and has no entry is a cut; an entry on a kept one makes a new take")
     story: str | None = Field(default=None, max_length=300, description="omit to keep; '' clears it")
     expected_updated_at: float | None = Field(default=None, description="the sequence's updated_at you edited; a "
                                               "newer sequence answers 409")
@@ -199,12 +202,12 @@ def _shot_paths(shot: ShotIn) -> dict[str, str | None]:
         if not (shot.first and shot.last):
             raise HTTPException(422, "a clip shot needs first and last (upload it with role=mid)")
         return {"first": str(_upload_path(shot.first)), "last": str(_upload_path(shot.last)),
-                "clip": _clip_path(shot.clip)}
+                "clip": _clip_path(shot.clip), "hold": shot.hold}
     image = shot.image or shot.first or shot.last
     if not image:
         raise HTTPException(422, "each shot needs an image or a clip")
     path = str(_upload_path(image))
-    return {"first": path, "last": path, "clip": None}
+    return {"first": path, "last": path, "clip": None, "hold": shot.hold}
 
 
 def _seq_out(seq: Any, jobs: bool = True) -> dict[str, Any]:
@@ -213,13 +216,14 @@ def _seq_out(seq: Any, jobs: bool = True) -> dict[str, Any]:
     d["shots"] = [{"first": Path(s["first"]).name, "last": Path(s["last"]).name,
                    "first_url": f"/uploads/{Path(s['first']).name}", "last_url": f"/uploads/{Path(s['last']).name}",
                    **({"clip": Path(s["clip"]).name, "clip_url": f"/uploads/{Path(s['clip']).name}"}
-                      if s.get("clip") else {})} for s in d["shots"]]
+                      if s.get("clip") else {}), **({"hold": s["hold"]} if s.get("hold") is not None else {})}
+                  for s in d["shots"]]
     for k in ("output", "poster", "sheet"):
         if d.get(k):
             d[f"{k}_url"] = f"/outputs/{d[k]}"
     if jobs:
         store = _engine().store
-        d["takes"] = [_job_out(j) if (j := store.get(i)) else None for i in d["segments"]]
+        d["takes"] = [_job_out(j) if i and (j := store.get(i)) else None for i in d["segments"]]  # None: a cut or missing
     return d
 
 
@@ -452,12 +456,14 @@ async def _upload_clip(file: UploadFile, role: str) -> dict[str, Any]:
         raise HTTPException(400, "role must be a, b or mid")
     data = await file.read(MAX_CLIP_BYTES + 1)
     if len(data) > MAX_CLIP_BYTES:
-        raise HTTPException(413, "clip larger than 40 MB")
+        raise HTTPException(413, "clip larger than 200 MB")
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / f"clip{Path(file.filename or 'x.mp4').suffix or '.mp4'}"
         src.write_bytes(data)
         try:
-            clip, seconds = await asyncio.to_thread(store_clip, settings, src)
+            # a clip in a sequence may sit between cuts (long); next to a transition the sequence checks 1-6 s
+            limits = media.LONG_CLIP_SECONDS if role == "mid" else media.CLIP_SECONDS
+            clip, seconds = await asyncio.to_thread(store_clip, settings, src, limits)
             ends = {}
             for end in (("first", "last") if role == "mid" else ("last",) if role == "a" else ("first",)):
                 frame = await asyncio.to_thread(media.clip_frame, clip, Path(tmp) / f"{end}.png", end == "last")

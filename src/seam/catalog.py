@@ -172,8 +172,8 @@ def _describe_selected(engine: Engine, args: dict[str, Any]) -> dict[str, Any]:
         return {"say": NOTHING_OPEN}
     if not hasattr(record, "segments"):
         return {"say": f"This take: {_take_line(engine, record)}."}
-    parts = [engine.store.get(j) for j in record.segments]
-    rows = "; ".join(f"{i}. {_take_line(engine, j)}" for i, j in enumerate(parts, 1) if j)
+    rows = "; ".join(f"{i}. {_take_line(engine, j) if (j := engine.store.get(job_id)) else 'missing'}" if job_id
+                     else f"{i}. a cut, nothing generated" for i, job_id in enumerate(record.segments, 1))
     return {"say": f"This sequence has {len(record.shots)} shots and is {record.status}. Transitions: {rows}."}
 
 
@@ -215,7 +215,7 @@ def _propose_new_take(engine: Engine, args: dict[str, Any]) -> dict[str, Any]:
             part = 0
         if not 1 <= part <= len(record.segments):
             return {"say": f"Which transition, 1 to {len(record.segments)}? Say it all at once, like: transition 2 to Smoke at 10 s."}
-    base = engine.store.get(record.segments[part - 1]) if is_sequence else record
+    base = (engine.store.get(record.segments[part - 1]) if record.segments[part - 1] else None) if is_sequence else record
     replaced = bool(base and base.params.get("prompt_override")) and ("preset" in changes or "prompt_extra" in changes)
     if replaced:
         changes["prompt_override"] = ""  # a written prompt would win over the change being offered

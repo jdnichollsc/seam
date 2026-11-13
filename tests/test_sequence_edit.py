@@ -30,10 +30,6 @@ def test_reorder_renders_only_new_hand_offs_and_keeps_the_canvas(seam) -> None:
     c, e, tmp = seam
     seq = _four(c, e, tmp)
     url = f"/api/sequences/{seq['id']}/edit"
-    r = c.post(url, json={"order": [1, 3, 2, 4]})  # 1→3, 3→2 and 2→4 are all new
-    assert r.status_code == 422 and all(p in r.json()["detail"] for p in ("1 → 3", "3 → 2", "2 → 4"))
-    assert _drain(e) == [] and e.store.get_sequence(seq["id"]).segments == seq["segments"]
-
     r = c.post(url, json={"order": [1, 3, 2, 4], "transitions": {str(k): {"preset": "ink"} for k in (1, 2, 3)}})
     assert r.status_code == 200, r.text
     out = r.json()
