@@ -10,6 +10,7 @@ import shutil
 import tempfile
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import media, receipt, shotgen
+from . import media, receipt, remake, shotgen
 from . import backend as backends
 from . import models as model_status
 from .config import PACKAGE_DIR, get_settings
@@ -39,6 +40,7 @@ UPLOAD_ID = re.compile(r"^[0-9a-f]{16}\.png$")
 MAX_CLIP_BYTES = 200 * 1024 * 1024  # up to 60 s between cuts
 CLIP_ID = re.compile(r"^[0-9a-f]{16}\.mp4$")
 SEQ_ID = re.compile(r"^s[0-9a-f]{11}$")
+REMAKE_ID = re.compile(r"^r[0-9a-f]{11}$")
 VIDEO_TYPES = ("video/mp4", "video/quicktime", "video/webm")
 engine: Engine | None = None
 downloads: Downloads | None = None
@@ -794,6 +796,72 @@ def rough_cut(body: SequenceIn) -> dict[str, Any]:
 @app.get("/api/sequences")
 def list_sequences(limit: int = 20) -> list[dict[str, Any]]:
     return [_seq_out(s) for s in _engine().store.list_sequences(limit=min(limit, 100))]
+
+
+def _remake(rid: str, src: Path, folder: Path, footage: bool, most: int) -> dict[str, Any]:
+    found = remake.analyze(src)
+    work = folder / "work"
+    made = remake.draft(src, found["shots"], work, footage, most)
+    shots, beats, files = [], [], []
+    for s in made["shots"]:
+        if "clip" in s:
+            clip, _ = store_clip(settings, Path(s["clip"]), media.LONG_CLIP_SECONDS)
+            first, last = (store_upload(settings, media.clip_frame(clip, work / f"{end}.png", end == "last"))
+                           for end in ("first", "last"))
+            shots.append({"clip": clip.name, "first": first.name, "last": last.name})
+            shown, kept = first, clip
+        else:
+            shown = kept = store_upload(settings, Path(s["image"]))
+            shots.append({"image": shown.name, "hold": s["hold"]})
+        beats.append({"start": s["start"], "end": s["end"], "url": f"/uploads/{shown.name}"})
+        files.append(str(kept))
+    return {"id": rid, "source": found["source"], "found": len(found["shots"]), "footage": footage, "beats": beats,
+            "draft": {"shots": shots, "segments": made["segments"], "story": made["story"]}, "files": files,
+            "notes": made["notes"]}
+
+
+@app.post("/api/remakes", status_code=201)
+async def create_remake(file: UploadFile = File(...), footage: bool = False, max_beats: int = remake.MAX_BEATS) -> dict[str, Any]:
+    """A reference video (up to 3 minutes, 200 MB) as a sequence draft: its cuts become the shots, every hand-off a
+    cut. `draft` is the body of POST /api/sequences; nothing renders here and nothing is queued. Re-create
+    (default): each shot is the first frame of its part of the video; `footage`: that part of the video itself.
+    The video is not kept."""
+    if (file.content_type or "") not in VIDEO_TYPES:
+        raise HTTPException(400, "a reference is a video: mp4, mov or webm")
+    rid = "r" + uuid.uuid4().hex[:11]
+    folder = settings.data_dir / "remakes" / rid
+    folder.mkdir(parents=True)
+    src = folder / "source"
+    try:
+        size = 0
+        with src.open("wb") as fh:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > remake.MAX_BYTES:
+                    raise HTTPException(413, "video larger than 200 MB")
+                fh.write(chunk)
+        out = await asyncio.to_thread(_remake, rid, src, folder, footage, max_beats)
+    except HTTPException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    except ValueError as e:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(400, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        shutil.rmtree(folder, ignore_errors=True)
+        raise HTTPException(400, f"not a readable video: {e}"[:300]) from e
+    src.unlink(missing_ok=True)
+    shutil.rmtree(folder / "work", ignore_errors=True)
+    (folder / "remake.json").write_text(json.dumps(out), encoding="utf-8")
+    return out
+
+
+@app.get("/api/remakes/{remake_id}")
+def get_remake(remake_id: str) -> dict[str, Any]:
+    saved = settings.data_dir / "remakes" / remake_id / "remake.json"
+    if not REMAKE_ID.match(remake_id) or not saved.is_file():
+        raise HTTPException(404, "no such remake")
+    return json.loads(saved.read_text(encoding="utf-8"))
 
 
 @app.get("/api/sequences/{seq_id}")

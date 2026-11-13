@@ -201,7 +201,39 @@ def _seq_brief(seq: dict[str, Any]) -> dict[str, Any]:
 
 
 @server.tool()
-async def create_sequence(shots: list[str], segments: list[dict[str, Any]], story: str = "") -> dict[str, Any]:
+async def analyze_video(path: str, footage: bool = False, max_beats: int = 8) -> dict[str, Any]:
+    """Turn a reference video (a local mp4/mov/webm, up to 3 minutes; the user's own or one they may reuse) into a
+    sequence draft. Nothing renders and nothing is queued.
+
+    Its cuts become the shots (at most max_beats, 2-8: neighbours are joined when there are more) and every
+    hand-off is a cut. Default: each shot is a still, the first frame of its part of the video, to re-create with
+    the user's own or generated images; footage=True: each shot is that part of the video itself. Returns shots
+    (file paths), holds, segments and story, ready for create_sequence, plus beats (where each shot sits in the
+    video) and notes (what the limits changed). Show the user the draft and agree on it first: replace stills, turn
+    a cut into an effect by replacing that segment with {"preset": …}. Music, voices and real people's faces are
+    not copied: the user supplies their own.
+    """
+    p = Path(path).expanduser()
+    kind = VIDEO_TYPES.get(p.suffix.lower())
+    if not p.is_file() or not kind:
+        raise ValueError(f"not a video file (mp4, mov, webm): {p}")
+    async with httpx.AsyncClient(base_url=BASE, timeout=900) as c:
+        with p.open("rb") as fh:
+            try:
+                r = await c.post("/api/remakes", params={"footage": footage, "max_beats": max_beats}, files={"file": (p.name, fh, kind)})
+            except httpx.ConnectError as e:
+                raise RuntimeError(f"Seam server not reachable at {BASE} — start it with `seam serve`.") from e
+    if r.status_code >= 400:
+        raise RuntimeError(f"POST /api/remakes → {r.status_code}: {r.text[:400]}")
+    out = r.json()
+    return {"shots": out["files"], "holds": [s.get("hold") for s in out["draft"]["shots"]],
+            "segments": out["draft"]["segments"], "story": out["draft"]["story"], "beats": out["beats"],
+            "found": out["found"], "source": out["source"], "notes": out["notes"]}
+
+
+@server.tool()
+async def create_sequence(shots: list[str], segments: list[dict[str, Any]], story: str = "",
+                          holds: list[float | None] | None = None) -> dict[str, Any]:
     """Queue one longer video through several shots: shot 1 → shot 2 → … with a transition at each hand-off.
 
     shots: 2-8 local file paths in order, images or clips. A clip plays in full at its place; the transition before
@@ -209,15 +241,19 @@ async def create_sequence(shots: list[str], segments: list[dict[str, Any]], stor
     a clip whose hand-offs are both cuts may be 1-60 s. segments: one dict per hand-off (len(shots) - 1), each
     {"preset": id from list_presets, "model"?: id from list_models, "seconds"?: one of its lengths, "seed"?,
     "prompt_extra"?, "a_desc"?, "b_desc"?}, or {"preset": "cut"}: no transition, the two shots meet with a hard cut
-    and nothing renders (an image next to a cut shows for 2 s). Only cuts: the video is joined at once. Every segment is checked before anything renders; each one is
+    and nothing renders (an image next to a cut shows for 2 s, or for its entry in holds: one per shot, 0.5-10 s, None
+    for the default; analyze_video returns them). Only cuts: the video is joined at once. Every segment is checked before anything renders; each one is
     an ordinary job (judge it with preview_job). Every take renders at the first shot's size (the sequence keeps
     that canvas through later edits). story: optional, ≤300 chars, the idea of the whole film (who, where, mood),
     shared context for every transition; per-transition direction goes in each segment's prompt_extra. Follow with
     wait_sequence.
     """
+    if holds is not None and len(holds) != len(shots):
+        raise ValueError("holds has one entry per shot")
     ups = await asyncio.gather(*[_upload(p, "mid") for p in shots])
     body = {"shots": [{"clip": u["clip"], "first": u["first"], "last": u["last"]} if u.get("clip")
-                      else {"image": u["id"]} for u in ups], "segments": segments, "story": story}
+                      else {"image": u["id"], **({"hold": h} if h is not None else {})}
+                      for u, h in zip(ups, holds or [None] * len(ups))], "segments": segments, "story": story}
     return _seq_brief(await _req("POST", "/api/sequences", json=body))
 
 
