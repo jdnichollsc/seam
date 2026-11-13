@@ -86,6 +86,11 @@ export function ShotForm({ studio, tabs }: { studio: ShotStudio; tabs: ReactNode
   const busy = s.shots.some((x) => x.status === 'queued' || x.status === 'running')
   const empty = !s.prompt.trim()
   const limit = s.current?.max_prompt ?? 4000
+  const most = s.current?.max_count ?? 4
+  const { count, setCount } = s
+  useEffect(() => {
+    if (count > most) setCount(most)  // this model makes fewer at a time
+  }, [count, most, setCount])
   const over = s.prompt.length > limit
   return (
     <>
@@ -112,7 +117,7 @@ export function ShotForm({ studio, tabs }: { studio: ShotStudio; tabs: ReactNode
             </label>
             <div className="shot-field"><span>Aspect</span><Seg label="Aspect" options={ASPECTS.map((a) => [a, a])} value={s.aspect} onChange={s.setAspect} /></div>
             <div className="shot-field"><span>Quality</span><Seg label="Quality" options={QUALITIES} value={s.quality} onChange={s.setQuality} /></div>
-            <div className="shot-field"><span>How many</span><Seg label="How many" options={COUNTS.map((c) => [c, c])} value={s.count} onChange={s.setCount} /></div>
+            <div className="shot-field"><span>How many</span><Seg label="How many" options={COUNTS.filter((c) => c <= most).map((c) => [c, c])} value={s.count} onChange={s.setCount} /></div>
             <label className="shot-field">
               <span>Seed</span>
               <input value={s.seed} inputMode="numeric" placeholder="Random" onChange={(e) => s.setSeed(e.target.value.replace(/\D/g, ''))} />

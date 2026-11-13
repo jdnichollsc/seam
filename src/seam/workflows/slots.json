@@ -471,6 +471,54 @@
       ]
     }
   },
+  "shot_h3": {
+    "workflow": "minimax_h3_image.api.json",
+    "output_node": "9",
+    "label": "MiniMax H3 Image",
+    "kind": "image",
+    "max_prompt": 4000,
+    "max_count": 1,
+    "quality": {
+      "draft": [
+        1.0,
+        6
+      ],
+      "standard": [
+        2.1,
+        6
+      ],
+      "high": [
+        4.2,
+        6
+      ]
+    },
+    "slots": {
+      "prompt": [
+        "23:24",
+        "value"
+      ],
+      "width": [
+        "23:5",
+        "width"
+      ],
+      "height": [
+        "23:5",
+        "height"
+      ],
+      "steps": [
+        "23:7",
+        "steps"
+      ],
+      "seed": [
+        "23:7",
+        "seed"
+      ],
+      "filename_prefix": [
+        "9",
+        "filename_prefix"
+      ]
+    }
+  },
   "orbit": {
     "workflow": "orbit.api.json",
     "output_node": "92",

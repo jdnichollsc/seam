@@ -233,8 +233,8 @@ async def generate_shot(prompt: str, aspect: str = "16:9", quality: str = "stand
     """Generate images for the user's Shots collection, on the backend Seam is set to, and wait for them.
 
     prompt: framing, environment, light, lens, style. aspect: 16:9, 9:16, 1:1, 4:3, 3:4 or 21:9. quality: draft, standard
-    or high. count: 1-4. model: shot (Z-Image-Turbo, up to 4000 characters), shot_klein (FLUX.2 Klein 4B, 4000) or
-    shot_juggernaut (Juggernaut XL, 600). Show the user the images. use_shot turns one into a file for create_transition or create_sequence.
+    or high. count: 1-4. model: shot (Z-Image-Turbo, up to 4000 characters), shot_klein (FLUX.2 Klein 4B, 4000),
+    shot_juggernaut (Juggernaut XL, 600) or shot_h3 (MiniMax H3 Image, 4000, count 1 only). Show the user the images. use_shot turns one into a file for create_transition or create_sequence.
     """
     shot = await _req("POST", "/api/shots", json={"prompt": prompt, "aspect": aspect, "quality": quality, "count": count, "seed": seed, "model": model})
     for _ in range(600):

@@ -845,8 +845,8 @@ class Engine:
     def shot_models(self, backend: str | None = None) -> list[dict[str, Any]]:
         backend = backend or backends.current(self.settings)[0]
         models = load_image_models(self.settings.workflows_dir)
-        limits = {m.model: m.max_prompt for m in models.values()}
-        return [{**m, "max_prompt": limits[m["id"]]} for m in model_status.listing(self.settings, models, backend)]
+        return [{**m, "max_prompt": models[m["id"]].max_prompt, "max_count": models[m["id"]].max_count}
+                for m in model_status.listing(self.settings, models, backend)]
 
     def shots_unavailable(self, backend: str | None = None, model: str = "shot") -> str | None:
         """Why this model can't generate here, in words; None when it can or the node list could not be read."""
@@ -867,6 +867,8 @@ class Engine:
         spec = self._shot_spec(model)
         if len(prompt) > spec.max_prompt:
             raise ValueError(f"{spec.label} takes up to {spec.max_prompt} characters; this prompt has {len(prompt)}")
+        if count > spec.max_count:
+            raise ValueError(f"{spec.label} makes {spec.max_count} image{'s' if spec.max_count > 1 else ''} at a time")
         width, height, steps = shotgen.plan(aspect, quality, count, spec.quality)
         backend = backends.current(self.settings)[0]  # read once: what was checked is what the record keeps
         if why := self.shots_unavailable(backend, spec.model):
@@ -916,7 +918,8 @@ class Engine:
             wf = client.workflows.from_file(spec.workflow_file)
             for slot, value in {"prompt": shot.prompt, "width": shot.width, "height": shot.height, "count": shot.count,
                                 "steps": shot.steps, "seed": shot.seed, "filename_prefix": f"seam/{shot.id}"}.items():
-                wf.set_input(*spec.slots[slot], value)
+                if slot in spec.slots:  # a model that makes one image has no count
+                    wf.set_input(*spec.slots[slot], value)
             with self._submit_lock:
                 if self._shot(shot.id).status == "cancelled":
                     return

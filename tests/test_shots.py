@@ -313,3 +313,16 @@ def test_each_model_has_its_own_limit_steps_and_graph(seam, monkeypatch: pytest.
     assert e.variation(made["id"]).model == "Juggernaut XL"
     for spec in load_image_models(e.settings.workflows_dir).values():
         assert missing_slots(spec) == [] and spec.model not in load_catalog(e.settings.workflows_dir)
+
+
+def test_a_model_that_makes_one_image_refuses_more(seam, monkeypatch: pytest.MonkeyPatch) -> None:
+    c, e, client = seam
+    monkeypatch.setattr(e, "shots_unavailable", lambda *_a, **_k: None)
+    assert next(m for m in c.get("/api/shots").json()["models"] if m["id"] == "shot_h3")["max_count"] == 1
+    two = c.post("/api/shots", json={"prompt": "x", "model": "shot_h3", "count": 2})
+    assert two.status_code == 422 and "1 image at a time" in two.text
+    made = c.post("/api/shots", json={"prompt": "a pier", "model": "shot_h3", "aspect": "16:9"}).json()
+    assert (made["model"], made["steps"], made["width"], made["height"]) == ("MiniMax H3 Image", 6, 1936, 1088)
+    client.handle = Handle(count=1)
+    _run_next(e)
+    assert client.submitted[0].inputs["23:24", "value"] == "a pier" and client.submitted[0].inputs["23:5", "width"] == 1936

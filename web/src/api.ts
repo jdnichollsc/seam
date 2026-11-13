@@ -17,7 +17,7 @@ export type Preset = {
 export type Orbit = { id: string; status: string; error: string | null; width: number; height: number; frames: number; progress: number; url: string | null }
 export type ShotImage = { name: string; url: string; starred: boolean; deleted_at: number | null; orbit: Orbit | null }
 /** One generation: a prompt and settings, and the images it made. */
-export type ImageModel = { id: string; label: string; available: boolean | null; reason: string; max_prompt: number; ready_elsewhere?: string | null }
+export type ImageModel = { id: string; label: string; available: boolean | null; reason: string; max_prompt: number; max_count: number; ready_elsewhere?: string | null }
 
 export type GeneratedShot = {
   id: string

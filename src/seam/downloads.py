@@ -101,6 +101,11 @@ SETS: dict[str, ModelSet] = {s.id: s for s in (
     ModelSet("shot_juggernaut", "Juggernaut XL v9 (Generate shot)", ("shot_juggernaut",), (
         File("checkpoints", f"{HF}/RunDiffusion/Juggernaut-XL-v9/resolve/main/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors", 7105348188),
     ), (License("CreativeML OpenRAIL-M", f"{HF}/RunDiffusion/Juggernaut-XL-v9", "use restrictions apply"),)),
+    ModelSet("shot_h3", "MiniMax H3 Image (Generate shot)", ("shot_h3",), (
+        File("diffusion_models", f"{HF}/Comfy-Org/MiniMax-H3-Image/resolve/main/diffusion_models/minimax_h3_image_pruned_int8_convrot.safetensors", 20979314802),
+        File("text_encoders", f"{HF}/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", 15687142551),
+        File("vae", f"{HF}/Comfy-Org/MiniMax-H3-Image/resolve/main/vae/minimax_h3_image_vae_fp16.safetensors", 1168505312),
+    ), (License("MiniMax H3 Image Community License", f"{HF}/MiniMaxAI/MiniMax-H3-Image", "read its terms before commercial use"),)),
     ModelSet("orbit", "MiniMax-H3 Ref2VA + ORB360 (360° orbit)", ("orbit",), (
         File("diffusion_models", f"{HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors", 20970379616),
         File("text_encoders", f"{HF}/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", 15687142551),
