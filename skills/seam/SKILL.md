@@ -72,8 +72,13 @@ separate transitions: shot 1 → shot 2 → … with one transition at each hand
    up to 60 s, a clip next to a transition stays 1-6 s.
    Before rendering a long one, `rough_cut(shots, segments)` shows the order and pacing in seconds, for free: shots,
    clips and a card naming each transition. Rendered transitions will replace those cards and run longer.
-3. `create_sequence(shots, segments, story?)` — `segments` has one entry per hand-off: `{"preset": …,
+3. `create_sequence(shots, segments, story?, holds?)` — `segments` has one entry per hand-off: `{"preset": …,
    "seconds"?, "seed"?, "prompt_extra"?}`. Then `wait_sequence`.
+   Starting from a reference video the user owns or may reuse? `analyze_video(path, footage?, max_beats?)` finds
+   its cuts and returns a draft (`shots`, `holds`, `segments`, `story`) for `create_sequence`: one still per shot
+   (or, with `footage`, that part of the video), every hand-off a cut. It renders nothing. Show the user the draft
+   first; swap stills for their own or generated images and turn the cuts they want into effects. It finds hard
+   cuts only (a dissolve is missed), and music, voices and real people's faces are not copied.
 4. Judge **each segment** with `preview_job(take id)` exactly like a single transition (row 2, the middle), then the
    whole arc with `preview_sequence` (hand-offs: does each take land on the shot the next one leaves from?).
 5. Re-roll only the segment that fails with `refine_segment(sequence_id, segment, …)` — the other takes are reused

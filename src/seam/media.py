@@ -122,11 +122,12 @@ LONG_CLIP_SECONDS = (1.0, 60.0)  # a clip whose hand-offs are all cuts: it only 
 
 def normalize_clip(src: Path, dst: Path) -> Path:
     """Re-encode an uploaded clip (mp4/mov/webm) as H.264/AAC MP4 on one clock: picture and sound start at 0 with
-    their offset kept (late sound gets leading silence), the sound is cut to the picture, and the file carries an
-    exact video duration. Everything after this (frames, joins) can trust probe()."""
+    their offset kept (late sound gets leading silence), the sound is padded or cut to the picture (never the
+    picture to the sound), and the file carries an exact video duration. Everything after this (frames, joins) can
+    trust probe()."""
     _ensure_ffmpeg()
     has_audio = probe(src).has_audio
-    audio = ["-map", "0:a:0", "-af", "aresample=async=1:first_pts=0", "-c:a", "aac", "-ar", "48000", "-ac", "2",
+    audio = ["-map", "0:a:0", "-af", "aresample=async=1:first_pts=0,apad", "-c:a", "aac", "-ar", "48000", "-ac", "2",
              "-shortest"] if has_audio else ["-an"]
     tmp = dst.with_name(dst.stem + ".tmp.mp4")
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-map", "0:v:0", "-c:v", "libx264", "-crf", "16",

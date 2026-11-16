@@ -64,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("--seed", type=int)
     sr.add_argument("--extra", help="text appended to the preset prompt")
     sr.add_argument("-o", "--out", type=Path, default=Path("seam_sequence.mp4"))
+    rm = sub.add_parser("remake", help="a reference video as a sequence draft: its cuts become the shots (talks to a running `seam serve`)")
+    rm.add_argument("video", type=Path, help="mp4, mov or webm, up to 3 minutes; yours, or one you may reuse")
+    rm.add_argument("--footage", action="store_true", help="use the video's own footage as the shots (default: one still per shot, to re-create)")
+    rm.add_argument("--max-beats", type=int, default=8, help="most shots in the draft, 2-8")
     sub.add_parser("models", help="the models a transition can pick, and which can render on the current backend")
     sub.add_parser("mcp", help="run the MCP server (stdio) — talks to a running `seam serve`")
     bk = sub.add_parser("backend", help="where takes render: this machine or Comfy Cloud")
@@ -92,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "sequence":
         return _sequence(args)
+    if args.cmd == "remake":
+        return _remake(args)
 
     from .config import get_settings
     from .presets import load_presets
@@ -177,6 +183,34 @@ def _backend(args: argparse.Namespace) -> int:
     print(f"rendering on: {'Comfy Cloud (uses your credits)' if st['backend'] == backends.CLOUD else 'this machine'}"
           f" [{st['source']}]")
     print(f"Comfy Cloud key: {st['cloud']['key_source'] or f'not set (create one at {backends.KEYS_URL})'}")
+    return 0
+
+
+def _remake(args: argparse.Namespace) -> int:
+    """Prints the draft as JSON: `draft` is the body of POST /api/sequences, `files` are its shots on disk."""
+    import os
+
+    import httpx
+
+    base = os.environ.get("SEAM_URL", "http://127.0.0.1:7860").rstrip("/")
+    kind = {".mp4": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm"}.get(args.video.suffix.lower())
+    if not args.video.is_file() or not kind:
+        raise SystemExit(f"not a video file (mp4, mov, webm): {args.video}")
+    try:
+        with args.video.open("rb") as fh:
+            r = httpx.post(f"{base}/api/remakes", params={"footage": args.footage, "max_beats": args.max_beats},
+                           files={"file": (args.video.name, fh, kind)}, timeout=900)
+    except httpx.ConnectError:
+        raise SystemExit(f"Seam server not reachable at {base}: start it with `seam serve`.") from None
+    except httpx.HTTPError as e:
+        raise SystemExit(f"Seam did not answer in time or the connection dropped: {e}") from None
+    if r.status_code >= 400:
+        try:
+            why = r.json().get("detail", r.text)
+        except ValueError:
+            why = r.text[:300]
+        raise SystemExit(f"{r.status_code}: {why}")
+    print(json.dumps(r.json(), indent=2))
     return 0
 
 
