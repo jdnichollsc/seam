@@ -1427,7 +1427,7 @@ class Engine:
         return dst
 
 
-CLIP_FORMAT = b"seam-clip-v1:"  # bump when normalize_clip changes
+CLIP_FORMAT = b"seam-clip-v2:"  # bump when normalize_clip changes
 
 
 def store_clip(settings: Settings, src: Path, limits: tuple[float, float] = media.CLIP_SECONDS) -> tuple[Path, float]:

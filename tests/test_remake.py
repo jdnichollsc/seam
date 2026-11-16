@@ -78,6 +78,43 @@ def test_more_shots_than_a_sequence_holds_become_eight_beats(tmp_path: Path) -> 
     assert len(remake.draft(video, shots, tmp_path / "three", most=3)["shots"]) == 3
 
 
+def _frames(video: Path) -> int:
+    run = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries",
+                          "stream=nb_read_frames", "-of", "csv=p=0", str(video)], capture_output=True, text=True, check=True)
+    return int(run.stdout.strip())
+
+
+def test_a_cut_between_two_dark_shots_is_found_and_fast_motion_is_not_one(tmp_path: Path) -> None:
+    """Two dark greys ffmpeg's scene score puts under 0.3 (a cut it missed in a real video), then a shot whose every
+    frame changes (noise): the frame-difference pass finds the first cut and takes no frame of the noise for one."""
+    media._ensure_ffmpeg()
+    dst = tmp_path / "dark.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x202020:s=320x180:r=30:d=2",
+                    "-f", "lavfi", "-i", "color=c=0x3a3a3a:s=320x180:r=30:d=2",
+                    "-f", "lavfi", "-i", "color=c=gray:s=320x180:r=30:d=3,noise=alls=80:allf=t",
+                    "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0", "-pix_fmt", "yuv420p", str(dst)], check=True)
+    shots = remake.analyze(dst)["shots"]
+    assert [round(s["start"], 2) for s in shots] == [0.0, 2.0, 4.0]
+
+
+def test_footage_beats_are_cut_to_the_frame_and_keep_every_frame(tmp_path: Path) -> None:
+    """30 fps, cuts on frames 31 and 77 (times a millisecond seek rounds past), sound shorter than the picture: each
+    clip holds exactly its frames, and storing it pads the sound instead of cutting the picture."""
+    media._ensure_ffmpeg()
+    dst = tmp_path / "ref.mp4"
+    frames = [31, 46, 60]
+    inputs = [x for i, n in enumerate(frames) for x in ("-f", "lavfi", "-i", f"color=c={COLORS[i]}:s=320x180:r=30:d={n / 30}")]
+    subprocess.run(["ffmpeg", "-v", "error", "-y", *inputs, "-f", "lavfi", "-i", "sine=d=4.5",
+                    "-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]", "-map", "[v]", "-map", "3:a",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(dst)], check=True)
+    assert _frames(dst) == sum(frames)
+    shots = remake.analyze(dst)["shots"]
+    f = remake.draft(dst, shots, tmp_path / "work", footage=True)
+    assert [_frames(Path(s["clip"])) for s in f["shots"]] == frames
+    kept = media.normalize_clip(Path(f["shots"][2]["clip"]), tmp_path / "kept.mp4")
+    assert _frames(kept) == frames[2]  # its sound ended 0.07 s before the picture: the picture stays whole
+
+
 def test_beats_split_what_is_too_long_and_join_the_shortest_neighbours() -> None:
     assert remake.beats([{"start": 0, "end": 150}], longest=60) == [
         {"start": 0, "end": 50}, {"start": 50, "end": 100}, {"start": 100, "end": 150}]

@@ -9,6 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from . import media
 
 MAX_SECONDS = 180.0
@@ -24,14 +26,44 @@ _PTS = re.compile(r"pts_time:([0-9.]+)")
 
 def cut_times(video: Path, threshold: float = SCENE) -> list[float]:
     """The time each new shot starts at (the first excluded): frames whose picture differs sharply from the one
-    before. A dissolve or a fast pan may be missed or over-split; the draft is for the user to correct."""
+    before, by ffmpeg's scene score or by a jump in plain frame difference (`_jumps`). A dissolve or a fast pan may
+    be missed or over-split; the draft is for the user to correct."""
     media._ensure_ffmpeg()
     run = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(video), "-map", "0:v:0", "-an",
                           "-vf", f"select='gt(scene,{threshold})',showinfo", "-f", "null", "-"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
     if run.returncode:
         raise ValueError("not a readable video")
-    return sorted({float(t) for t in _PTS.findall(run.stderr) if float(t) > 0})
+    fps = media.probe(video).fps
+    found = sorted({float(t) for t in _PTS.findall(run.stderr) if float(t) > 0} | set(_jumps(video, fps)))
+    out: list[float] = []
+    for t in found:  # both ways find most cuts: keep one per cut
+        if not out or t - out[-1] > 1.5 / fps:
+            out.append(t)
+    return out
+
+
+JUMP = (18.0, 4.0)  # a cut: a mean gray change (0-255) at least this large, and this many times the one around it
+SMALL = (64, 36)  # the size frames are compared at
+
+
+def _jumps(video: Path, fps: float) -> list[float]:
+    """Cuts the scene score misses, such as one dark shot to another (it scores those under 0.3): a frame whose
+    change from the one before is large and far above the changes around it, so steady fast motion is not one."""
+    w, h = SMALL
+    run = subprocess.run(["ffmpeg", "-v", "error", "-i", str(video), "-map", "0:v:0", "-vf",
+                          f"scale={w}:{h},format=gray", "-f", "rawvideo", "-"], capture_output=True, check=False, timeout=600)
+    if run.returncode:
+        raise ValueError("not a readable video")
+    frames = np.frombuffer(run.stdout, np.uint8)[: len(run.stdout) // (w * h) * w * h].reshape(-1, w * h)
+    d = np.abs(np.diff(frames.astype(np.int16), axis=0)).mean(axis=1)  # d[i]: frame i to frame i + 1
+    big = []
+    for i in range(len(d)):
+        around = np.r_[d[max(i - 6, 0):i], d[i + 1:i + 7]]
+        if d[i] >= JUMP[0] and d[i] >= JUMP[1] * max(float(np.median(around)) if around.size else 0.0, 1.0):
+            big.append(i)
+    # a cut can be followed by a frame or two that still change a lot: keep the largest jump within 3 frames
+    return [(i + 1) / fps for i in big if all(d[j] < d[i] or (d[j] == d[i] and j > i) for j in big if 0 < abs(j - i) <= 3)]
 
 
 def analyze(video: Path) -> dict[str, Any]:
@@ -86,10 +118,19 @@ def _frame(video: Path, t: float, dst: Path) -> Path:
     return dst
 
 
-def _cut(video: Path, start: float, end: float, dst: Path) -> Path:
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.3f}", "-i", str(video), "-t", f"{end - start:.3f}",
-                    "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-crf", "16", "-preset", "veryfast",
-                    "-pix_fmt", "yuv420p", "-c:a", "aac", str(dst)], check=True, capture_output=True, timeout=300)
+def _cut(video: Path, start: float, end: float, dst: Path, info: media.VideoInfo) -> Path:
+    """That part of the video to the frame: from the frame `start` falls on up to the one `end` does, excluded. A
+    seek rounded to the millisecond can land a frame late, and one frame off at a cut shows."""
+    a, b = round(start * info.fps), round(end * info.fps)
+    seek = max(a / info.fps - 1.0, 0.0)  # a fast seek to just before, then the frames are picked by their times
+    t0, t1 = a / info.fps - seek, b / info.fps - seek
+    half = 0.5 / info.fps
+    audio = ["-map", "0:a:0", "-af", f"atrim=start={t0:.6f}:end={t1:.6f},asetpts=PTS-STARTPTS", "-c:a", "aac"] \
+        if info.has_audio else ["-an"]
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.6f}", "-i", str(video), "-map", "0:v:0", "-vf",
+                    f"trim=start={t0 - half:.6f}:end={t1 - half:.6f},setpts=PTS-STARTPTS", *audio,
+                    "-c:v", "libx264", "-crf", "16", "-preset", "veryfast", "-pix_fmt", "yuv420p", str(dst)],
+                   check=True, capture_output=True, timeout=300)
     return dst
 
 
@@ -105,6 +146,7 @@ def draft(video: Path, shots: list[dict[str, float]], work: Path, footage: bool 
     if len(found) < 2:
         raise ValueError("no cut was found in this video: a sequence needs at least two shots")
     work.mkdir(parents=True, exist_ok=True)
+    info = media.probe(video)
     out, notes = [], []
     if len(shots) > len(found):
         notes.append(f"{len(shots)} shots were found; neighbours were joined into {len(found)} beats")
@@ -112,7 +154,7 @@ def draft(video: Path, shots: list[dict[str, float]], work: Path, footage: bool 
         seconds = b["end"] - b["start"]
         beat = {"start": b["start"], "end": b["end"]}
         if footage and seconds >= CLIP[0]:
-            out.append({**beat, "clip": str(_cut(video, b["start"], b["end"], work / f"beat{i + 1}.mp4"))})
+            out.append({**beat, "clip": str(_cut(video, b["start"], b["end"], work / f"beat{i + 1}.mp4", info))})
             continue
         hold = min(max(seconds, HOLD[0]), HOLD[1])
         if footage:
