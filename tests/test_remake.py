@@ -168,6 +168,26 @@ def test_api_draft_makes_a_sequence_and_queues_nothing(seam) -> None:  # noqa: F
     assert len(clips["draft"]["shots"]) == 2 and all("clip" in s for s in clips["draft"]["shots"]) and clips["notes"]
     assert c.post("/api/sequences", json=clips["draft"]).status_code == 201
 
+    # each beat's shot is what the web form keeps: the same body as the draft, built the way the web builds it
+    for got in (out, clips):
+        ups = [b["shot"] for b in got["beats"]]
+        uploads = e.settings.uploads_dir
+        assert all((uploads / u[k].removeprefix("/uploads/")).is_file()
+                   for u in ups for k in ("url", "clip_url", "first_url", "last_url") if k in u)
+        body = [{"clip": u["clip"], "first": u["first"], "last": u["last"]} if u.get("clip") else {"image": u["id"], "hold": u["hold"]}
+                for u in ups]
+        assert body == got["draft"]["shots"]
+    assert all(u["width"] and u["height"] for u in (b["shot"] for b in clips["beats"]))
+    assert [b["shot"]["clip_seconds"] for b in clips["beats"]] == pytest.approx([3.5, 3.0], abs=0.05)
+
+    # the holds reach the rough cut, and an edited one changes its pacing (every hand-off a cut: no cards)
+    cuts = out["draft"]["segments"]
+    rough = c.post("/api/rough-cut", json={"shots": out["draft"]["shots"], "segments": cuts}).json()
+    assert rough["seconds"] == pytest.approx(2.0 + 1.5 + 3.0, abs=0.15)
+    edited = [{**out["draft"]["shots"][0], "hold": 4.0}, *out["draft"]["shots"][1:]]
+    assert c.post("/api/rough-cut", json={"shots": edited, "segments": cuts}).json()["seconds"] == pytest.approx(8.5, abs=0.15)
+    assert [s.get("hold") for s in c.post("/api/sequences", json={**out["draft"], "shots": edited}).json()["shots"]] == [4.0, 1.5, 3.0]
+
 
 def test_api_refuses_what_is_not_a_usable_reference(seam) -> None:  # noqa: F811
     c, e, tmp = seam

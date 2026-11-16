@@ -47,6 +47,19 @@ export type Upload = {
   clip_seconds?: number
   first?: string
   last?: string
+  /** an image next to a cut in a sequence: seconds it shows (0.5-10); unset, the server's default */
+  hold?: number
+}
+
+/** A reference video read into a draft: one beat per part between its cuts, `shot` ready for the Sequence form. */
+export type RemakeBeat = { start: number; end: number; url: string; shot: Upload }
+export type RemakeOut = {
+  id: string
+  source: { duration: number; fps: number; width: number; height: number; has_audio: boolean }
+  found: number
+  footage: boolean
+  beats: RemakeBeat[]
+  notes: string[]
 }
 
 export type SequenceStatus = 'running' | 'assembling' | 'succeeded' | 'failed' | 'cancelled'
@@ -90,7 +103,7 @@ export type DownloadsState = {
   models_dir?: string | null  // where a download lands
   models: { id: string; label: string; kind: string; feature: string; set: string | null; local: ModelAvailability; cloud: ModelAvailability }[]
 }
-export type ShotIn = { image: string } | { clip: string; first: string; last: string }
+export type ShotIn = { image: string; hold?: number } | { clip: string; first: string; last: string }
 /** order: current shot numbers in the new order; transitions: number in the NEW order → its effect (new hand-offs) */
 export type EditIn = { order: number[]; transitions?: Record<string, SegmentIn>; story?: string; expected_updated_at?: number }
 
@@ -318,6 +331,12 @@ export const api = {
   models: (refresh = false) => call<{ backend: BackendName; models: ModelRow[] }>(`/api/models${refresh ? '?refresh=true' : ''}`),
   examples: () => call<Example[]>('/api/examples'),
   loadExample: (id: string) => call<{ a: Upload; b: Upload; preset: string }>(`/api/examples/${id}`, { method: 'POST' }),
+  /** A reference video as a sequence draft; nothing renders. footage: its own parts as clips, else a still per part. */
+  remake: (file: File, footage: boolean) => {
+    const body = new FormData()
+    body.append('file', file)
+    return call<RemakeOut>(`/api/remakes?footage=${footage}`, { method: 'POST', body })
+  },
 }
 
 /** How a take was made (JSON) and the same take as a ComfyUI workflow bundle (zip). */
