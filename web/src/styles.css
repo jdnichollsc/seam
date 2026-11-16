@@ -250,7 +250,10 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .shot-use .btn { flex: 1 1 auto; padding-inline: 10px; white-space: nowrap; }
 .card .shot-use > span { flex-basis: 100%; }  /* the label above, so three buttons fit a narrow card */
 .shot-pending { display: grid; align-content: center; gap: 8px; min-height: 180px; padding: 16px; text-align: center; }
-.rough { width: 100%; border-radius: var(--r-node); background: #000; }
+.rough-wrap { display: grid; gap: 6px; }
+/* in the rail footer, outside the scrolling list: a tall (9:16) cut must not push the shots out of reach */
+.rough { display: block; width: 100%; max-height: 40vh; object-fit: contain; border-radius: var(--r-node); background: #000; }
+.rough-close { justify-self: end; padding: 4px 10px; font-size: 13px; }
 .apply-all { justify-self: start; margin: 0 12px 4px; padding: 0; border: 0; background: none; color: var(--dim); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
 .apply-all:hover { color: inherit; }
 .make-note { margin: 0; text-align: center; color: var(--dim); font-size: 13px; }

@@ -106,6 +106,10 @@ export function RemakeDialog({ shotsInForm, onOpen, onClose }: { shotsInForm: nu
           </>
         ) : (
           <>
+            <p className="get-note">
+              {draft.found - 1} cut{draft.found === 2 ? '' : 's'} found in {draft.source.duration.toFixed(1)} s, so {draft.found} shots.
+              {' '}Each shot runs from one cut to the next{draft.footage ? '' : '; a still stands for the whole shot'}.
+            </p>
             {draft.notes.map((n) => <p key={n} className="get-note">{n}</p>)}
             <ul className="remake-beats">
               {draft.beats.map((b, i) => (

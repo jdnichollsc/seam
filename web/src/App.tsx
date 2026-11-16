@@ -2306,7 +2306,14 @@ export default function App() {
                 {roughBusy ? 'Cutting…' : 'Rough cut · free, nothing renders'}
               </button>
             )}
-            {mode === 'seq' && rough && <video className="rough" src={rough} controls autoPlay muted playsInline aria-label="Rough cut of the sequence" />}
+            {mode === 'seq' && rough && (
+              <div className="rough-wrap">
+                <video className="rough" src={rough} controls autoPlay muted playsInline aria-label="Rough cut of the sequence" />
+                <button className="btn btn-quiet rough-close" onClick={() => setRough(null)}>
+                  <Icon name="close" /> Close rough cut
+                </button>
+              </div>
+            )}
             <p className="make-note">
               {mode === 'seq'
                 ? shots.length < 2
