@@ -805,15 +805,20 @@ def _remake(rid: str, src: Path, folder: Path, footage: bool, most: int) -> dict
     shots, beats, files = [], [], []
     for s in made["shots"]:
         if "clip" in s:
-            clip, _ = store_clip(settings, Path(s["clip"]), media.LONG_CLIP_SECONDS)
+            clip, seconds = store_clip(settings, Path(s["clip"]), media.LONG_CLIP_SECONDS)
             first, last = (store_upload(settings, media.clip_frame(clip, work / f"{end}.png", end == "last"))
                            for end in ("first", "last"))
             shots.append({"clip": clip.name, "first": first.name, "last": last.name})
             shown, kept = first, clip
+            # what POST /api/uploads?role=mid answers for this clip, so the web form takes it as is
+            shot = {**_upload_out(last), "clip": clip.name, "clip_url": f"/uploads/{clip.name}",
+                    "clip_seconds": round(seconds, 2), "first": first.name, "first_url": f"/uploads/{first.name}",
+                    "last": last.name, "last_url": f"/uploads/{last.name}"}
         else:
             shown = kept = store_upload(settings, Path(s["image"]))
             shots.append({"image": shown.name, "hold": s["hold"]})
-        beats.append({"start": s["start"], "end": s["end"], "url": f"/uploads/{shown.name}"})
+            shot = {**_upload_out(shown), "hold": s["hold"]}
+        beats.append({"start": s["start"], "end": s["end"], "url": f"/uploads/{shown.name}", "shot": shot})
         files.append(str(kept))
     return {"id": rid, "source": found["source"], "found": len(found["shots"]), "footage": footage, "beats": beats,
             "draft": {"shots": shots, "segments": made["segments"], "story": made["story"]}, "files": files,
@@ -823,7 +828,8 @@ def _remake(rid: str, src: Path, folder: Path, footage: bool, most: int) -> dict
 @app.post("/api/remakes", status_code=201)
 async def create_remake(file: UploadFile = File(...), footage: bool = False, max_beats: int = remake.MAX_BEATS) -> dict[str, Any]:
     """A reference video (up to 3 minutes, 200 MB) as a sequence draft: its cuts become the shots, every hand-off a
-    cut. `draft` is the body of POST /api/sequences; nothing renders here and nothing is queued. Re-create
+    cut. `draft` is the body of POST /api/sequences, and each beat's `shot` is that shot as an upload (what
+    POST /api/uploads answers, plus `hold` for a still); nothing renders here and nothing is queued. Re-create
     (default): each shot is a still from the start of its part of the video; `footage`: that part of the video itself.
     The video is not kept."""
     if (file.content_type or "") not in VIDEO_TYPES:

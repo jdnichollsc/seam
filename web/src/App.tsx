@@ -1,6 +1,7 @@
 import { Icon } from './Icon'
 import { ShotCollection, ShotForm, type ShotTarget, useShotStudio } from './ShotStudio'
 import { ModelsDialog, ModelsLink, OpenModelsContext, unavailableNote } from './Models'
+import { RemakeDialog } from './Remake'
 import { createContext, Fragment, lazy, Suspense, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import gsap from 'gsap'
 import { useGSAP } from '@gsap/react'
@@ -1344,7 +1345,14 @@ type ShotListProps = {
   onRemove: (i: number) => void
   onMove: (i: number, by: -1 | 1) => void
   onSelect: (i: number) => void
+  onRemake: () => void
+  onHold: (i: number, hold: number | undefined) => void
 }
+
+/** An image shows on its own only next to a cut (as the engine times it): first and last shots included. */
+const holdsAt = (shots: Upload[], segs: Seg[], i: number) =>
+  !shots[i].clip && (segs[i - 1]?.preset === CUT || segs[i]?.preset === CUT)
+const HOLD_DEFAULT = 2  // the server's own (engine.DEFAULT_HOLD)
 
 /** The sequence already ends on this transition's first shot: only its last shot is new. */
 const shotsChain = (shots: Upload[], job: Job) => {
@@ -1353,7 +1361,7 @@ const shotsChain = (shots: Upload[], job: Job) => {
 }
 
 /** Sequence shots in order, with the hand-off between each pair: pick one to edit its effect below. */
-function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemove, onMove, onSelect }: ShotListProps) {
+function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemove, onMove, onSelect, onRemake, onHold }: ShotListProps) {
   const input = useRef<HTMLInputElement>(null)
   const [picking, setPicking] = useState(false)
   const [over, setOver] = useState(false)
@@ -1367,6 +1375,14 @@ function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemo
               Shot {i + 1}
               {s.clip && <span className="shot-clip">Clip {s.clip_seconds?.toFixed(1)} s</span>}
             </span>
+            {holdsAt(shots, segs, i) && (
+              <label className="shot-hold" title="How long this image shows next to a cut">
+                <input type="number" min={0.5} max={10} step={0.1} inputMode="decimal" value={s.hold ?? ''} placeholder={String(HOLD_DEFAULT)}
+                  aria-label={`Seconds shot ${i + 1} shows`}
+                  onChange={(e) => onHold(i, e.target.value === '' ? undefined : Number(e.target.value))} />
+                <span>s</span>
+              </label>
+            )}
             <span className="shot-tools">
               <button className="btn-icon btn-xs" disabled={i === 0} onClick={() => onMove(i, -1)} aria-label={`Move shot ${i + 1} earlier`} title="Earlier">
                 <Icon name="up" />
@@ -1423,6 +1439,11 @@ function ShotList({ shots, segs, sel, busy, name, onAdd, takes, onImport, onRemo
           />
         </li>
       )}
+      <li className="take-pick">
+        <button className="take-pick-open" disabled={busy} onClick={onRemake}>
+          <Icon name="upload" /> Start from a video
+        </button>
+      </li>
       {shots.length < SEQ_MAX && takes.length > 0 && (
         <li className="take-pick">
           <button className="take-pick-open" aria-expanded={picking} onClick={() => setPicking(!picking)}>
@@ -1643,6 +1664,7 @@ export default function App() {
   }, [preset, presets, modelPick, models]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const [modelsOpen, setModelsOpen] = useState(false)
+  const [remakeOpen, setRemakeOpen] = useState(false)
   const [modelsAt, setModelsAt] = useState(0)  // bumped when a download lands: the pickers re-read what can render
   const [notice, setNotice] = useState<string | null>(null)
   useEffect(() => subscribe({  // a set can finish with the Models panel closed: the pickers still learn about it
@@ -1713,6 +1735,19 @@ export default function App() {
       setExtra(own.extra)
     }
   }
+  /** A reference video's shots replace the form's, every hand-off a cut; the Effect node edits the first one. */
+  const openRemake = (next: Upload[]) => {
+    const cut = { preset: CUT, seconds, extra: '', model: '' }
+    setSegs(next.slice(1).map(() => ({ ...cut })))
+    setShots(next)
+    setSel(0)
+    setPreset(CUT)
+    setModelPick('')
+    setExtra('')
+    setRemakeOpen(false)
+  }
+  const setHold = (i: number, hold: number | undefined) =>
+    setShots((prev) => prev.map((u, k) => (k === i ? { ...u, hold } : u)))
   const roughFor = useRef(0)
   useEffect(() => {  // a cut of what is no longer on the form misleads
     roughFor.current += 1
@@ -1796,7 +1831,9 @@ export default function App() {
     { scope: root, dependencies: [focus?.id, focusDone, fseq?.output_url] },
   )
 
-  const shotsIn = () => shots.map((u) => (u.clip && u.first && u.last ? { clip: u.clip, first: u.first, last: u.last } : { image: u.id }))
+  // a hold goes only with an image next to a cut: between two effects the video ignores it, the rough cut would not
+  const shotsIn = () => shots.map((u, i) => (u.clip && u.first && u.last ? { clip: u.clip, first: u.first, last: u.last }
+    : { image: u.id, ...(u.hold != null && Number.isFinite(u.hold) && holdsAt(shots, segs, i) ? { hold: Math.min(10, Math.max(0.5, u.hold)) } : {}) }))
 
   const makeRoughCut = async () => {
     setError(null)
@@ -2092,6 +2129,7 @@ export default function App() {
       </header>
 
       {modelsOpen && <ModelsDialog onClose={() => setModelsOpen(false)} onReady={() => setModelsAt(Date.now())} />}
+      {remakeOpen && <RemakeDialog shotsInForm={shots.length} onOpen={openRemake} onClose={() => setRemakeOpen(false)} />}
       {notice && !modelsOpen && <p className="app-toast" role="status">{notice}</p>}
       <div className="studio">
         <aside className="rail" aria-label="Make a transition">
@@ -2103,7 +2141,8 @@ export default function App() {
             {mode === 'seq' ? (
               <ShotList shots={shots} segs={segs} sel={sel} busy={seqBusy > 0}
                 name={(id) => (id === SURPRISE ? 'Surprise me' : id === CUT ? 'Cut' : presetName(id))}
-                onAdd={addShots} takes={jobs.filter((j) => j.status === 'succeeded').slice(0, 20)} onImport={importTake} onRemove={removeShot} onMove={moveShot} onSelect={setSel} />
+                onAdd={addShots} takes={jobs.filter((j) => j.status === 'succeeded').slice(0, 20)} onImport={importTake} onRemove={removeShot} onMove={moveShot} onSelect={setSel}
+                onRemake={() => setRemakeOpen(true)} onHold={setHold} />
             ) : (<>
             <div className="slots">
               <Slot
@@ -2267,7 +2306,14 @@ export default function App() {
                 {roughBusy ? 'Cutting…' : 'Rough cut · free, nothing renders'}
               </button>
             )}
-            {mode === 'seq' && rough && <video className="rough" src={rough} controls autoPlay muted playsInline aria-label="Rough cut of the sequence" />}
+            {mode === 'seq' && rough && (
+              <div className="rough-wrap">
+                <video className="rough" src={rough} controls autoPlay muted playsInline aria-label="Rough cut of the sequence" />
+                <button className="btn btn-quiet rough-close" onClick={() => setRough(null)}>
+                  <Icon name="close" /> Close rough cut
+                </button>
+              </div>
+            )}
             <p className="make-note">
               {mode === 'seq'
                 ? shots.length < 2

@@ -250,7 +250,10 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
 .shot-use .btn { flex: 1 1 auto; padding-inline: 10px; white-space: nowrap; }
 .card .shot-use > span { flex-basis: 100%; }  /* the label above, so three buttons fit a narrow card */
 .shot-pending { display: grid; align-content: center; gap: 8px; min-height: 180px; padding: 16px; text-align: center; }
-.rough { width: 100%; border-radius: var(--r-node); background: #000; }
+.rough-wrap { display: grid; gap: 6px; }
+/* in the rail footer, outside the scrolling list: a tall (9:16) cut must not push the shots out of reach */
+.rough { display: block; width: 100%; max-height: 40vh; object-fit: contain; border-radius: var(--r-node); background: #000; }
+.rough-close { justify-self: end; padding: 4px 10px; font-size: 13px; }
 .apply-all { justify-self: start; margin: 0 12px 4px; padding: 0; border: 0; background: none; color: var(--dim); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
 .apply-all:hover { color: inherit; }
 .make-note { margin: 0; text-align: center; color: var(--dim); font-size: 13px; }
@@ -659,3 +662,32 @@ textarea:focus, .more input:focus { outline: none; border-color: var(--yellow); 
   border-radius: var(--r-ctl); background: var(--ink-raise); border: 1px solid var(--ok); color: var(--ok); }
 .seq-take.is-cut .seq-take-media { display: grid; place-items: center; color: var(--muted); }
 .seq-take.is-cut .seq-take-media .icon { width: 22px; height: 22px; }
+
+/* Start from a video: a reference read into shots */
+.remake-dialog { width: min(720px, calc(100vw - 32px)); }
+.remake-drop {
+  display: grid; justify-items: center; gap: 6px; padding: 22px 12px; border: 1.5px dashed var(--line-strong);
+  border-radius: var(--r-ctl); color: var(--muted); text-align: center; transition: border-color 0.2s;
+}
+.remake-drop.is-over { border-color: var(--sock-image); }
+.remake-drop .slot-hint { max-width: none; }
+.remake-mode { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 0; border: 0; font-size: 14px; }
+.remake-mode label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.remake-beats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.remake-beats label {
+  display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--ink-raise); font-size: 14px; font-weight: 700; cursor: pointer; transition: opacity 0.2s, border-color 0.2s;
+}
+.remake-beats label:hover { border-color: var(--sock-image); }
+.remake-beats label.is-off { opacity: 0.45; }
+.remake-beats img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 6px; background: #000; }
+.remake-beats span { display: inline-flex; align-items: center; gap: 6px; }
+.remake-beats small { color: var(--dim); font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.remake-actions, .remake-replace { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.remake-replace span { color: var(--text); font-size: 14px; }
+.shot:has(.shot-hold) { grid-template-columns: 64px 1fr auto auto; }
+.shot-hold { display: inline-flex; align-items: center; gap: 4px; color: var(--dim); font-size: 12.5px; }
+.shot-hold input {
+  width: 52px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--ink-deep);
+  color: var(--text); font: inherit; font-variant-numeric: tabular-nums;
+}
